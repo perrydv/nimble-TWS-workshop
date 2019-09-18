@@ -1,0 +1,78 @@
+---
+title: "Introduction to NIMBLE"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# What Is NIMBLE?
+
+For more details on authoring R presentations please visit <https://support.rstudio.com/hc/en-us/articles/200486468>.
+
+- Bullet 1
+- Bullet 2
+- Bullet 3
+
+# First example: An occupancy model
+
+* From AHM section 10.4.
+* Most AHM examples have been converted to NIMBLE: https://github.com/nimble-dev/AHMnimble
+
+# Occupancy Example:
+
+* Load the package
+```{r}
+library(nimble)
+```
+
+* Write the model code **in R**.
+```{r echo = TRUE}
+Section10p4_noDerived_code <- nimbleCode({
+    # Priors
+    mean.p ~ dunif(0, 1)         # Detection intercept on prob. scale
+    alpha0 <- logit(mean.p)      # Detection intercept
+    alpha1 ~ dunif(-20, 20)      # Detection slope on wind
+    mean.psi ~ dunif(0, 1)       # Occupancy intercept on prob. scale
+    beta0 <- logit(mean.psi)     # Occupancy intercept
+    beta1 ~ dunif(-20, 20)       # Occupancy slope on vegHt
+    
+    # Likelihood
+    for (i in 1:M) {
+      # True state model for the partially observed true state
+      z[i] ~ dbern(psi[i])      # True occupancy z at site i
+      logit(psi[i]) <- beta0 + beta1 * vegHt[i]
+      for (j in 1:J) {
+        # Observation model for the actual observations
+        y[i,j] ~ dbern(p.eff[i,j])    # Detection-nondetection at i and j
+        p.eff[i,j] <- z[i] * p[i,j]   # 'straw man' for WinBUGS
+        logit(p[i,j]) <- alpha0 + alpha1 * wind[i,j]
+      }
+    }
+    # Derived quantities are removed.
+  }
+)
+```
+
+Get the occupancy setup code.
+
+
+
+Slide With Plot
+===============
+
+```{r, echo=FALSE}
+plot(cars)
+```
