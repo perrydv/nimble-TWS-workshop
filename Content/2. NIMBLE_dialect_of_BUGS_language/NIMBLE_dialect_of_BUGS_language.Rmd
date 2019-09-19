@@ -1,0 +1,196 @@
+---
+title: "NIMBLE's version of the BUGS language (or, how to convert code from BUGS/JAGS to NIMBLE)"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache = TRUE)
+```
+
+How NIMBLE is the same as BUGS and JAGS
+=====
+
+* Most BUGS and JAGS distributions and functions are supported in NIMBLE
+
+    - For distributions, see [User Manual Section 5.2.4](https://r-nimble.org/html_manual/cha-writing-models.html#subsec:dists-and-functions)
+    - For function, see  [User Manual Section 5.2.5](https://r-nimble.org/html_manual/cha-writing-models.html#subsec:BUGS-lang-fxns)
+	
+* Most BUGS and JAGS syntax is supported in NIMBLE
+
+    - Truncation syntax is different when using `nimbleCode`. 
+    - `T(dnorm(mu, tau), 0, )` in NIMBLE instead of `dnorm(mu, tau) (0,)`.
+    - It can be the same as for BUGS/JAGS if reading code from a file with `readBUGSmodel`).
+
+Converting from JAGS/BUGS) to NIMBLE
+=====
+
+See our [guide online](https://r-nimble.org/quick-guide-for-converting-from-jags-or-bugs-to-nimble).
+
+How NIMBLE extends BUGS
+=====
+
+- Alternative distribution parameterizations (like R).
+- Named parameters (like R).
+- Vectorized math and linear algebra
+- Definition-time if-then-else (multiple model variants from the same code)
+- User-defined functions and distributions
+- Distinction between `constants` and `data`.
+
+How NIMBLE is limited compared to BUGS and/or JAGS:
+=====
+
+- NIMBLE is stricter about requiring square brackets and informative indices for non-scalar nodes.
+
+Alternative distribution parameterizations and named parameters
+=====
+
+- BUGS/JAGS: Only `dnorm(mu, tau)` is supported, where `tau` is precision.
+- NIMBLE: Alternative parameterizations and named parameters are supported:
+
+    - `dnorm(mean = mu, sd = sigma)`
+    - `dnorm(mean = mu, var = sigma_squared)`
+    - `dnorm(mean = mu, tau = tau)` (tau = precision)
+    
+- Distributions with alternative parameterizations are listed in Table 5.2 of [User Manual Section 5.2.4](https://r-nimble.org/html_manual/cha-writing-models.html#subsec:dists-and-functions)
+
+Vectorized math and linear algebra
+=====
+More basic math is supported.  A lot of it is R-like.
+
+- `x[1:5] <- (A[1:5, 1:5] %*% b[1:5] + c[1:5])[,1]`
+- Need to be careful about indexing.  This expression returns a matrix, and we convert it to a vector with `[,1]` at the end.
+
+
+Extensibility: new functions and distributions
+=====
+
+## Say we have an occupancy model.
+
+- We want to write `y[i, 1:J] ~ dOcc(occProb = psi[i], detectionProb = p[i, 1:J])`
+- The idea is to marginalize (sum probabilities) over the unknown occupancy state.
+- This means the MCMC will not need to sample occupancy states (pro) but `dOcc` will involve more computation than `dbern` (con).
+- We will see how to do this later.
+
+
+Distinction between data and constants
+=====
+
+## Constants are values needed to define model relationships
+
+- Index ranges like `N`
+- Constant indexing vectors
+- Constants must be provided when creating a model with `nimbleModel`.
+
+## Data represents a flag on the role a parameter (node) plays in the model
+
+- e.g. Data nodes shouldn't be sampled in MCMC.
+- Data values can be changed.
+- Data can be provided when calling `nimbleModel` or later.
+
+## Providing data and constants together.
+
+- Data and constants can be provided together **as `constants`**.
+- It would be slightly easier for BUGS/JAGS users to call this "data", but that would blur the concepts.  They are more correctly viewed as `constants` if provided together.
+- NIMBLE will usually disambiguate data when it is provided as constants.
+
+# More explicit need to provide dimensions
+
+- Square brackets must always be provided to indicate number of dimensions
+
+    - If `x` is 2-dimensional, use `x[,] %*% beta[]`, not `x %*% beta`
+    
+* Sometimes NIMBLE is not as smart as BUGS/JAGS at determining dimensions.  There are two solutions:
+
+    * Give dimensions explicity: `x[1:n, 1:m]`, OR
+    * Provide a `dimensions` argument to `nimbleModel`.  Example: `dimensions = list(x = c(n, m))`.
+
+# Vectorized math and linear algebra
+
+Instead of writing this in your model code:
+```{r, vectorized-1}
+nimbleOptions(verbose = FALSE)
+m1 <- nimbleModel(
+    nimbleCode({
+        for(i in 1:5) {
+            predicted[i] <- beta0 + beta1 * x[i]
+        }
+    }
+    ))
+```
+you can write this:
+```{r, vectorized-2}
+m2 <- nimbleModel(
+    nimbleCode({
+        predicted[1:5] <- beta0 + beta1 * x[1:5]
+    }
+    ))
+```
+
+These are not equivalent:
+```{r, vectorized-3}
+## m1 has 5 scalar nodes
+m1$getNodeNames()
+## m2 has 1 vector node
+m2$getNodeNames()
+```
+
+One is not necessarily better than the other.  It depends on the model
+and the MCMC configuration.  (More on those topics later.)
+
+Vectorized declarations do not work for distributions.
+
+Discussion topic for breaks:
+
+- Would vectorized distribution declarations be helpful?
+- How should they be defined?
+
+
+# Definition-time if-then-else
+
+If you wish to define multiple alternative models in one set of code,
+you can use if-then-else statements.  These will be evaluated based on
+variables in the R environment when the model is defined.  For
+example:
+
+```{r if-then-else}
+code <- nimbleCode({
+    sigma ~ dunif(0, 10)
+    beta0 ~ dnorm(0, sd = 1000)
+    beta1 ~ dnorm(0, sd = 1000)
+    if(INCLUDE_X2) {beta2 ~ dnorm(0, sd = 1000)} else{}
+    for(i in 1:10) {
+        if(INCLUDE_X2) {
+            y[i] ~ dnorm(beta0 + beta1 * x1[i] + beta2 * x2[i], sd = sigma)
+        } else {
+            y[i] ~ dnorm(beta0 + beta1 * x1[i], sd = sigma)
+        }
+    }
+})
+
+INCLUDE_X2 <- FALSE
+m1 <- nimbleModel(code)
+INCLUDE_X2 <- TRUE
+m2 <- nimbleModel(code)
+m1$getNodeNames()
+m2$getNodeNames()
+
+```
+
+m2 has `beta2` while m1 does not.  The long names are "lifted nodes"
+-- more on those later.
+
+Discussion topic for breaks:
+
+- What would be a more useful system for writing model variants within
+  one block of code?

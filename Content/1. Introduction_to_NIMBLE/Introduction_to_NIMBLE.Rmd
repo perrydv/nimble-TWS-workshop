@@ -1,0 +1,312 @@
+---
+title: "Introduction to NIMBLE"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache = TRUE)
+```
+
+# What Is NIMBLE?
+
+- A framework for hierarchical statistical models and methods.
+- A nearly drop-in alternative to WinBUGS, OpenBUGS and JAGS.
+- A configurable system for MCMC.
+- A library of other methods.
+- A model-generic programming system to write new analysis methods.
+- Numerical Inference for statistical Models using Bayesian and Likelihood Estimation.
+
+# First example: An occupancy model
+
+* AHM = [Applied Hierarchical Modeling in Ecology, Vol. I](https://www.mbr-pwrc.usgs.gov/pubanalysis/keryroylebook/) by Marc Kéry and J. Andrew Royle. 2015. Elsevier.
+* Most AHM examples have been converted to NIMBLE: (https://github.com/nimble-dev/AHMnimble)[https://github.com/nimble-dev/AHMnimble]
+* Thanks to Marc Kéry, Andy Royle, and Mike Meredith for permission to post modified versions of their code on GitHub.
+* "Code from AHM" means the code is from the AHM code made available from the book's web site.
+* Occupancy example from section 10.4:
+
+- Simulated data
+- `M` sites.
+- Each site is visited `J` times.
+- `y[i, j]` is detection (1) or non-detection(0) for visit `j` to site `i`.
+- Explanatory variables:
+
+    - `vegHt` = Vegetation height: logistic effect on occupancy probability
+    - `wind` = Wind speed: logistic effect on occupancy probability
+
+# Occupancy example: Load the package
+```{r}
+library(nimble)
+```
+
+# Occupancy example: Write the model code **in R**
+- Slightly modified from AHM.
+- Derived quantities are removed.
+```{r echo = TRUE}
+Section10p4_code <- nimbleCode({
+  # Priors
+  mean.p ~ dunif(0, 1)         # Detection intercept on prob. scale
+  alpha0 <- logit(mean.p)      # Detection intercept
+  alpha1 ~ dunif(-20, 20)      # Detection slope on wind
+  mean.psi ~ dunif(0, 1)       # Occupancy intercept on prob. scale
+  beta0 <- logit(mean.psi)     # Occupancy intercept
+  beta1 ~ dunif(-20, 20)       # Occupancy slope on vegHt
+  
+  # Likelihood
+  for (i in 1:M) {
+    # True state model for the partially observed true state
+    z[i] ~ dbern(psi[i])      # True occupancy z at site i
+    logit(psi[i]) <- beta0 + beta1 * vegHt[i]
+    for (j in 1:J) {
+      # Observation model for the actual observations
+      y[i,j] ~ dbern(p.eff[i,j])    # Detection-nondetection at i and j
+      p.eff[i,j] <- z[i] * p[i,j]   # 'straw man' for WinBUGS
+      logit(p[i,j]) <- alpha0 + alpha1 * wind[i,j]
+    }
+  }
+  # Derived quantities are removed.
+}
+)
+```
+
+# Occupancy example: Simulate data
+(This code is modified from AHM.  It is here for completeness.)
+```{r}
+DO_PLOT <- TRUE
+if(!exists("DO_PLOT"))
+  DO_PLOT <- FALSE
+print("do plot")
+print(DO_PLOT)
+# Choose sample sizes and prepare obs. data array y
+set.seed(1)                   # So we all get same data set
+M <- 100                      # Number of sites
+J <- 3                        # Number of presence/absence measurements
+y <- matrix(NA, nrow = M, ncol = J) # to contain the obs. data
+
+# Create a covariate called vegHt
+vegHt <- sort(runif(M, -1, 1)) # sort for graphical convenience
+
+# Choose parameter values for occupancy model and compute occupancy
+beta0 <- 0                    # Logit-scale intercept
+beta1 <- 3                    # Logit-scale slope for vegHt
+psi <- plogis(beta0 + beta1 * vegHt) # Occupancy probability
+# plot(vegHt, psi, ylim = c(0,1), type = "l", lwd = 3) # Plot psi relationship
+
+# Now visit each site and observe presence/absence perfectly
+z <- rbinom(M, 1, psi)        # True presence/absence
+
+# Look at data so far
+table(z)
+
+# Plot the true system state
+if(DO_PLOT) {
+  par(mfrow = c(1, 3), mar = c(5,5,2,2), cex.axis = 1.5, cex.lab = 1.5)
+  plot(vegHt, z, xlab="Vegetation height", ylab="True presence/absence (z)", frame = F, cex = 1.5)
+  plot(function(x) plogis(beta0 + beta1*x), -1, 1, add=T, lwd=3, col = "red")
+}
+
+# Create a covariate called wind
+wind <- array(runif(M * J, -1, 1), dim = c(M, J))
+
+# Choose parameter values for measurement error model and compute detectability
+alpha0 <- -2                        # Logit-scale intercept
+alpha1 <- -3                        # Logit-scale slope for wind
+p <- plogis(alpha0 + alpha1 * wind) # Detection probability
+# plot(p ~ wind, ylim = c(0,1))     # Look at relationship
+
+# Take J = 3 presence/absence measurements at each site
+for(j in 1:J) {
+  y[,j] <- rbinom(M, z, p[,j])
+}
+sum(apply(y, 1, max))               # Number of sites with observed presences
+
+# Plot observed data and true effect of wind on detection probability
+if(DO_PLOT) {
+  plot(wind, y, xlab="Wind", ylab="Observed det./nondetection data (y)", frame = F, cex = 1.5)
+  plot(function(x) plogis(alpha0 + alpha1*x), -1, 1, add=T, lwd=3, col = "red")
+}
+# Look at the data: occupancy, true presence/absence (z), and measurements (y)
+cbind(psi=round(psi,2), z=z, y1=y[,1], y2=y[,2], y3=y[,3])
+
+# Create factors
+time <- matrix(rep(as.character(1:J), M), ncol = J, byrow = TRUE)
+hab <- c(rep("A", 33), rep("B", 33), rep("C", 34))  # Must have M = 100
+
+# Bundle and summarize data set
+str( occupancy_data <- list(y = y, 
+                            vegHt = vegHt,
+                            wind = wind,
+                            M = nrow(y),
+                            J = ncol(y),
+                            XvegHt = seq(-1, 1, length.out=100),
+                            Xwind = seq(-1, 1, length.out=100)) )
+
+# Initial values: must give for same quantities as priors given !
+zst <- apply(y, 1, max)        # Avoid data/model/inits conflict
+occupancy_inits <- function(){
+  list(z = zst, 
+       mean.p = runif(1), 
+       alpha1 = runif(1), 
+       mean.psi = runif(1), 
+       beta1 = runif(1))
+}
+
+```
+
+
+Occupancy Example: Steps to use NIMBLE:
+===============
+
+1. Build the model.  It is an R object.
+2. Build the MCMC.
+
+    - 2a. Configure the MCMC.
+    - 2b. Customize the MCMC.
+    - 2c. Build the MCMC.
+
+3. Compile the model and MCMC.
+4. Run the MCMC.
+5. Extract the samples.
+
+- `nimbleMCMC` does all of this at once.
+- Steps 2a-2c can be combined if no customization is needed.
+- `runMCMC` does steps 4-5
+
+    - manages burn-in, multiple chains, and extracting samples.
+    
+Occupancy Example: 1. Build the model
+=====
+
+```{r}
+occModel <- nimbleModel(Section10p4_code,
+                        constants = occupancy_data, #discuss "constants" vs. "data"
+                        inits = occupancy_inits())
+```
+
+Occupancy Example: 2. Build the MCMC
+=====
+```{r}
+occMCMC <- buildMCMC(occModel)
+```
+
+Occupancy Example: 3. Compile the model and MCMC.
+=====
+
+This can be done in one step or two.  We'll use two.
+
+```{r}
+CoccModel <- compileNimble(occModel)
+CoccMCMC <- compileNimble(occMCMC, project = occModel)
+```
+Occupancy Example: 4. Run the MCMC
+=====
+```{r}
+CoccMCMC$run(10000)
+```
+
+
+Occupancy Example: 5. Extract the samples
+=====
+```{r}
+samples <- as.matrix(CoccMCMC$mvSamples)
+```
+
+Occupancy Example: Look at results:
+=====
+
+There are many packages for summarizing and plotting MCMC samples.  NIMBLE does not try to re-invent these wheels.
+
+1. `mcmcplots`
+
+```{r eval = FALSE}
+library(mcmcplots)
+mcmcplot(samples, dir = ".", filename = "occupancy_samples_mcmcplot")
+```
+
+```{r echo=FALSE}
+library(mcmcplots)
+mcmcplot(samples, dir = ".", filename = "orig_occupancy_samples_mcmcplot")
+```
+
+Results that comes with these slides are [here](orig_occupancy_samples_mcmcplot.html).
+
+Results if you generated your own will be [here](occupancy_samples_mcmcplot.html).
+
+2. `coda`
+
+```{r eval = FALSE}
+library(coda)
+pdf("occupancy_samples_coda.pdf")
+plot(as.mcmc(samples))
+dev.off()
+```
+
+```{r echo = FALSE}
+library(coda)
+pdf("orig_occupancy_samples_coda.pdf")
+plot(as.mcmc(samples))
+dev.off()
+```
+
+Results that comes with these slides are [here](orig_occupancy_samples_coda.pdf).
+
+Results if you generated your own will be [here](occupancy_samples_coda.pdf).
+
+MCMC workflow in NIMBLE
+=====
+
+Here is a summary of the MCMC workflow in NIMBLE.
+
+[nimbleWorkflow.pdf](nimbleWorkflow.pdf)
+
+Occupancy Example: Doing it all at once with `nimbleMCMC`
+=====
+
+Start from:
+
+- code
+- constants + data
+- inits
+
+```{r}
+samples2 <- nimbleMCMC(Section10p4_code,
+                       constants = occupancy_data,
+                       inits = occupancy_inits,
+                       niter = 10000,
+                       nburnin = 1000,
+                       nchains = 2,
+                       samplesAsCodaMCMC = TRUE)
+summary(samples2) ## from coda
+```
+
+Occupancy Example: Managing the run with `runMCMC`
+=====
+
+Start from:
+
+- Compiled MCMC
+
+```{r}
+samples3 <- runMCMC(CoccMCMC, 
+                    niter = 10000,
+                    nburnin = 1000,
+                    nchains = 2,
+                    samplesAsCodaMCMC = TRUE)
+summary(samples3)
+```
+
+Other notes
+=====
+
+- `readBUGSmodel` will read BUGS/JAGS model code and variables from their standard file formats.
+

@@ -1,0 +1,297 @@
+---
+title: "Customizing the occupancy model"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache = TRUE)
+```
+
+```{r echo=FALSE}
+library(nimble)
+```
+
+Set up the example again:
+=====
+(This code is modified from AHM.  It is here for completeness.)
+```{r}
+DO_PLOT <- TRUE
+if(!exists("DO_PLOT"))
+  DO_PLOT <- FALSE
+print("do plot")
+print(DO_PLOT)
+# Choose sample sizes and prepare obs. data array y
+set.seed(1)                   # So we all get same data set
+M <- 100                      # Number of sites
+J <- 3                        # Number of presence/absence measurements
+y <- matrix(NA, nrow = M, ncol = J) # to contain the obs. data
+
+# Create a covariate called vegHt
+vegHt <- sort(runif(M, -1, 1)) # sort for graphical convenience
+
+# Choose parameter values for occupancy model and compute occupancy
+beta0 <- 0                    # Logit-scale intercept
+beta1 <- 3                    # Logit-scale slope for vegHt
+psi <- plogis(beta0 + beta1 * vegHt) # Occupancy probability
+# plot(vegHt, psi, ylim = c(0,1), type = "l", lwd = 3) # Plot psi relationship
+
+# Now visit each site and observe presence/absence perfectly
+z <- rbinom(M, 1, psi)        # True presence/absence
+
+# Look at data so far
+table(z)
+
+# Plot the true system state
+if(DO_PLOT) {
+  par(mfrow = c(1, 3), mar = c(5,5,2,2), cex.axis = 1.5, cex.lab = 1.5)
+  plot(vegHt, z, xlab="Vegetation height", ylab="True presence/absence (z)", frame = F, cex = 1.5)
+  plot(function(x) plogis(beta0 + beta1*x), -1, 1, add=T, lwd=3, col = "red")
+}
+
+# Create a covariate called wind
+wind <- array(runif(M * J, -1, 1), dim = c(M, J))
+
+# Choose parameter values for measurement error model and compute detectability
+alpha0 <- -2                        # Logit-scale intercept
+alpha1 <- -3                        # Logit-scale slope for wind
+p <- plogis(alpha0 + alpha1 * wind) # Detection probability
+# plot(p ~ wind, ylim = c(0,1))     # Look at relationship
+
+# Take J = 3 presence/absence measurements at each site
+for(j in 1:J) {
+  y[,j] <- rbinom(M, z, p[,j])
+}
+sum(apply(y, 1, max))               # Number of sites with observed presences
+
+# Plot observed data and true effect of wind on detection probability
+if(DO_PLOT) {
+  plot(wind, y, xlab="Wind", ylab="Observed det./nondetection data (y)", frame = F, cex = 1.5)
+  plot(function(x) plogis(alpha0 + alpha1*x), -1, 1, add=T, lwd=3, col = "red")
+}
+# Look at the data: occupancy, true presence/absence (z), and measurements (y)
+cbind(psi=round(psi,2), z=z, y1=y[,1], y2=y[,2], y3=y[,3])
+
+# Create factors
+time <- matrix(rep(as.character(1:J), M), ncol = J, byrow = TRUE)
+hab <- c(rep("A", 33), rep("B", 33), rep("C", 34))  # Must have M = 100
+
+# Bundle and summarize data set
+str( occupancy_data <- list(y = y, 
+                            vegHt = vegHt,
+                            wind = wind,
+                            M = nrow(y),
+                            J = ncol(y),
+                            XvegHt = seq(-1, 1, length.out=100),
+                            Xwind = seq(-1, 1, length.out=100)) )
+
+# Initial values: must give for same quantities as priors given !
+zst <- apply(y, 1, max)        # Avoid data/model/inits conflict
+occupancy_inits <- function(){
+  list(z = zst, 
+       mean.p = runif(1), 
+       alpha1 = runif(1), 
+       mean.psi = runif(1), 
+       beta1 = runif(1))
+}
+```
+
+Original code
+=====
+
+```{r}
+Section10p4_code <- nimbleCode({
+  # Priors
+  mean.p ~ dunif(0, 1)         # Detection intercept on prob. scale
+  alpha0 <- logit(mean.p)      # Detection intercept
+  alpha1 ~ dunif(-20, 20)      # Detection slope on wind
+  mean.psi ~ dunif(0, 1)       # Occupancy intercept on prob. scale
+  beta0 <- logit(mean.psi)     # Occupancy intercept
+  beta1 ~ dunif(-20, 20)       # Occupancy slope on vegHt
+  
+  # Likelihood
+  for (i in 1:M) {
+    # True state model for the partially observed true state
+    z[i] ~ dbern(psi[i])      # True occupancy z at site i
+    logit(psi[i]) <- beta0 + beta1 * vegHt[i]
+    for (j in 1:J) {
+      # Observation model for the actual observations
+      y[i,j] ~ dbern(p.eff[i,j])    # Detection-nondetection at i and j
+      p.eff[i,j] <- z[i] * p[i,j]   # 'straw man' for WinBUGS
+      logit(p[i,j]) <- alpha0 + alpha1 * wind[i,j]
+    }
+  }
+  # Derived quantities are removed.
+}
+)
+```
+
+Use a new distribution to marginalize over `z[i]`
+=====
+
+```{r}
+occCode2 <- nimbleCode({
+  # Priors
+  mean.p ~ dunif(0, 1)         # Detection intercept on prob. scale
+  alpha0 <- logit(mean.p)      # Detection intercept
+  alpha1 ~ dunif(-20, 20)      # Detection slope on wind
+  mean.psi ~ dunif(0, 1)       # Occupancy intercept on prob. scale
+  beta0 <- logit(mean.psi)     # Occupancy intercept
+  beta1 ~ dunif(-20, 20)       # Occupancy slope on vegHt
+  
+  # Likelihood
+  for (i in 1:M) {
+    # True state model for the partially observed true state
+    logit(psi[i]) <- beta0 + beta1 * vegHt[i]
+    y[i, 1:J] ~ dOcc_v(probOcc = psi[i], probDetect = p[i, 1:J], len = J)
+    for (j in 1:J) {
+      logit(p[i,j]) <- alpha0 + alpha1 * wind[i,j]
+    }
+  }
+}
+)
+```
+
+How to write a new distribution: dOcc
+=====
+
+Prob(Detection history) = Prob(Detection history | Occupied) Prob(Occupied) + Prob(Detection history | Unoccupied) Prob(Unoccupied)
+
+Hybrid math / code expression:
+\[
+P(y[i,1:J] | \psi, p[i, 1:J]) = \psi \prod_{j=1}^J \mbox{dbern}(y[i,j] | p[i,j]) + (1-\psi) I(\mbox{all } y[i, j] \mbox{ = 0})
+\]
+
+```{r}
+dOcc_v <- nimbleFunction(
+  run = function(x = double(1),
+                 probOcc = double(0),
+                 probDetect = double(1),
+                 len = integer(0, default = 0),
+                 log = logical(0, default = 0)) {
+    if (len != 0) 
+      if (len != length(x))
+        stop("Argument 'len' must match length of data, or be 0.")
+    if (length(x) != length(probDetect))
+      stop("Length of data does not match length of detection vector.")
+    returnType(double(0))
+    logProb_x_given_occupied <- sum(dbinom(x,
+                                           prob = probDetect, 
+                                           size = 1,
+                                           log = TRUE))
+    prob_x_given_unoccupied <- sum(x) == 0
+    prob_x <- exp(logProb_x_given_occupied) * probOcc + 
+      prob_x_given_unoccupied * (1 - probOcc)
+    if (log)
+      return(log(prob_x))
+    return(prob_x)
+  }
+)
+```
+
+Run MCMC with the new version:
+=====
+
+```{r}
+occModel2 <- nimbleModel(occCode2,
+                         constants = occupancy_data,
+                         inits = occupancy_inits())
+occMCMC2 <- buildMCMC(occModel2)
+CoccModel2 <- compileNimble(occModel2)
+CoccMCMC2 <- compileNimble(occMCMC2, project = occModel2)
+samples <- runMCMC(CoccMCMC2, niter = 10000, nburnin = 1000)
+```
+
+Look at the results:
+=====
+```{r eval = FALSE}
+library(mcmcplots)
+mcmcplot(samples, dir = ".", filename = "occModel2_samples_mcmcplot")
+```
+
+```{r echo=FALSE}
+library(mcmcplots)
+mcmcplot(samples, dir = ".", filename = "orig_occModel2_samples_mcmcplot")
+```
+
+Results that comes with these slides are [here](orig_occModel2_samples_mcmcplot.html).
+
+Results if you generated your own will be [here](occModel2_samples_mcmcplot.html).
+
+Vectorize some calculations
+=====
+
+Vectorizing some calculations:
+
+- Can make code more compact.
+- Can make model and MCMC building and compiling faster.
+- Can improve MCMC efficiency, but sometimes not by much.
+- Can hurt MCMC efficiency if done in the wrong places.
+- We'll learn to think about models more later.
+
+```{r}
+occCode3 <- nimbleCode({
+  # Priors
+  mean.p ~ dunif(0, 1)         # Detection intercept on prob. scale
+  alpha0 <- logit(mean.p)      # Detection intercept
+  alpha1 ~ dunif(-20, 20)      # Detection slope on wind
+  mean.psi ~ dunif(0, 1)       # Occupancy intercept on prob. scale
+  beta0 <- logit(mean.psi)     # Occupancy intercept
+  beta1 ~ dunif(-20, 20)       # Occupancy slope on vegHt
+  
+  # Likelihood
+  logit(p[1:M,1:J]) <- alpha0 + alpha1 * wind[1:M,1:J]
+  for (i in 1:M) {
+    # True state model for the partially observed true state
+    z[i] ~ dbern(psi[i])      # True occupancy z at site i
+    logit(psi[i]) <- beta0 + beta1 * vegHt[i]
+    p.eff[i, 1:J] <- z[i] * p[i, 1:J]   # 'straw man' for WinBUGS
+    for (j in 1:J) {
+      # Observation model for the actual observations
+      y[i,j] ~ dbern(p.eff[i,j])    # Detection-nondetection at i and j
+    }
+  }
+  # Derived quantities are removed.
+}
+)
+```
+
+Run MCMC with the vectorized version:
+=====
+
+```{r}
+occModel3 <- nimbleModel(occCode3,
+                         constants = occupancy_data,
+                         inits = occupancy_inits())
+occMCMC3 <- buildMCMC(occModel3)
+CoccModel3 <- compileNimble(occModel3)
+CoccMCMC3 <- compileNimble(occMCMC3, project = occModel3)
+samples <- runMCMC(CoccMCMC3, niter = 10000, nburnin = 1000)
+```
+
+Look at the results:
+=====
+```{r eval = FALSE}
+library(mcmcplots)
+mcmcplot(samples, dir = ".", filename = "occModel3_samples_mcmcplot")
+```
+
+```{r echo=FALSE}
+library(mcmcplots)
+mcmcplot(samples, dir = ".", filename = "orig_occModel3_samples_mcmcplot")
+```
+
+Results that comes with these slides are [here](orig_occModel3_samples_mcmcplot.html).
+
+Results if you generated your own will be [here](occModel3_samples_mcmcplot.html).
+
