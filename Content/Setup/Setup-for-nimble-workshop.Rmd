@@ -1,0 +1,72 @@
+---
+title: "Getting set up for TWS-AFS nimble workshop"
+author: "Perry de Valpine"
+date: "September 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Thanks for signing up for the workshop on hierarchical modeling with `nimble` at the 2019 TWS-AFS meeting.
+
+This note covers what you need to do to be set up for the workshop.
+
+You should have a computer with:
+
+- a relatively up-to-date version of R.
+- the following packges:
+
+    - nimble
+    - mcmcplots
+    - devtools (just in case)
+
+- a working C++ compiler (see below).
+- ability to install additional R packages if necessary.
+
+During the day of the workshop, you may need to install an additional R package or two.  If so, I'll give you instructions on that.
+
+# Installing and checking a C++ compiler
+
+`nimble` generates and compiles C++ on your machine.  You don't need to know anything about C++, but you do need to get it installed.
+
+The best resource on this is Chapter 4 of the NIMBLE User Manual: [https://r-nimble.org/html_manual/cha-installing-nimble.html](https://r-nimble.org/html_manual/cha-installing-nimble.html).  (That text is a link, but this pdf doesn't automatically show it that way.)
+
+Some additional notes:
+
+- On linux, often you will have working compiler tools automatically.
+- On OS X, you need to be sure you have XCode command-line tools installed.  If you have newly installed XCode, you might need to open it once to give it a one-time authorization.
+- On Windows, be sure the checkbox to modify the PATH is checked when you install Rtools.exe.
+
+## Test code
+
+To see if your computer is set up correctly and your C++ compiler works for `nimble`, please try the following:
+
+```{r eval = FALSE}
+library(nimble)
+m <- nimbleModel(nimbleCode({x ~ dnorm(0, 1)}), inits = list(x = 0))
+cm <- compileNimble(m)
+MCMC <- buildMCMC(m)
+CMCMC <- compileNimble(MCMC, project = m)
+CMCMC$run(100)
+```
+
+You should see output similar to the following:
+```{r eval = TRUE}
+library(nimble)
+m <- nimbleModel(nimbleCode({x ~ dnorm(0, 1)}), inits = list(x = 0))
+cm <- compileNimble(m)
+MCMC <- buildMCMC(m)
+CMCMC <- compileNimble(MCMC, project = m)
+CMCMC$run(100)
+```
+ 
+# Problems?
+
+If you have any problems, please email me.
+
+Usually it works smoothly.
+
+If it doesn't, it can be difficult to diagnose problems specific to one machine, but I will try.
+

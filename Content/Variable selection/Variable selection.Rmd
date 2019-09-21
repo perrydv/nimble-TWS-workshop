@@ -1,0 +1,77 @@
+---
+title: "Variable selection"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache = TRUE)
+library(nimble)
+```
+
+## Set up a model
+```{r}
+lmCode <- nimbleCode({
+  psi ~ dunif(0,1)
+  sigma ~ dunif(0, 20)
+  for(i in 1:numVars) {
+    z[i] ~ dbern(psi)
+    beta[i] ~ dnorm(0, sd = 100)
+    zbeta[i] <- z[i] * beta[i]
+  }
+  for(i in 1:n) {
+    pred.y[i] <- inprod(X[i, 1:numVars], zbeta[1:numVars])
+    y[i] ~ dnorm(pred.y[i], sd = sigma)
+  }
+})
+
+X <- matrix(rnorm(1000), nrow = 100, ncol = 15)
+lmModel <- nimbleModel(lmCode, constants = list(numVars = 15, n = 100, X = X))
+```
+
+```{r}
+lmModel$beta <- c(0.1, 0.2, 0.3, 0.4, 0.5, rep(0, 10))
+lmModel$sigma <- 1
+lmModel$z <- rep(1, 10)
+lmModel$psi <- 0.5
+lmModel$calculate()
+lmModel$simulate('y')
+lmModel$calculate() 
+lmModel$setData('y')
+```
+
+```{r}
+## Naive version
+MCMCconf <- configureMCMC(lmModel)
+MCMCconf$addMonitors('z')
+MCMC <- buildMCMC(MCMCconf)
+ClmModel <- compileNimble(lmModel)
+CMCMC <- compileNimble(MCMC, project = lmModel, resetFunctions = TRUE)
+samples <- runMCMC(CMCMC, niter = 10000, nburnin = 1000)
+
+```
+
+```{r}
+MCMCconf <- configureMCMC(lmModel)
+configureRJ(MCMCconf,
+            targetNodes = 'beta',
+            indicatorNodes = 'z',
+            control = list(mean = 0, scale = .1))
+MCMC <- buildMCMC(MCMCconf)
+```
+
+```{r}
+ClmModel <- compileNimble(lmModel)
+CMCMC <- compileNimble(MCMC, project = lmModel, resetFunctions = TRUE)
+samples <- runMCMC(CMCMC, niter = 10000, nburnin = 1000)
+```
