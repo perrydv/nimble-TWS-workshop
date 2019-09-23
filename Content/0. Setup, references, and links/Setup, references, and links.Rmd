@@ -1,0 +1,88 @@
+---
+title: "Setup, references, and links"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache = TRUE)
+```
+
+These slides contain various setup information, references used in other modules, and relevant links.
+
+NIMBLE web site and resources
+=====
+[https://r-nimble.org](https://r-nimble.org)
+
+[User Manual](https://r-nimble.org/documentation-2)
+
+[nimble-users list](https://groups.google.com/forum/#!forum/nimble-users)
+
+NIMBLE papers
+=====
+
+## Main paper (to cite when using nimble in a publication)
+de Valpine, Perry, Daniel Turek, Christopher J. Paciorek, Clifford Anderson-Bergman, Duncan Temple Lang, and Rastislav Bodik. 2017. “Programming With Models: Writing Statistical Algorithms for General Model Structures With NIMBLE.” Journal of Computational and Graphical Statistics 26 (2): 403–13. https://doi.org/10.1080/10618600.2016.1172487.
+
+## Hidden Markov models (e.g., multi-event and multi-state capture-recapture)
+Turek, Daniel, Perry de Valpine, and Christopher J. Paciorek. 2016. “Efficient Markov Chain Monte Carlo Sampling for Hierarchical Hidden Markov Models.” Environmental and Ecological Statistics 23 (4): 549–64. https://doi.org/10.1007/s10651-016-0353-z.
+
+## Automatic blocking of MCMC algorithms
+Turek, Daniel, Perry de Valpine, Christopher J. Paciorek, and Clifford Anderson-Bergman. 2017. “Automated Parameter Blocking for Efficient Markov Chain Monte Carlo Sampling.” Bayesian Analysis 12 (2): 465–90. https://doi.org/10.1214/16-BA1008.
+
+
+Books with examples used in this workshop:
+=====
+
+## AHM 
+Kery, Marc, and J. Andrew Royle. 2015. Applied Hierarchical Modeling in Ecology: Analysis of Distribution, Abundance and Species Richness in R and BUGS: Volume 1:Prelude and Static Models. 1 edition. Amsterdam ; Boston: Academic Press. [website](https://www.mbr-pwrc.usgs.gov/pubanalysis/keryroylebook/)
+
+All BUGS/JAGS examples from AHM have been converted to nimble [here](https://github.com/nimble-dev/AHMnimble).
+
+## BPA
+Kery, Marc, and Michael Schaub. 2011. Bayesian Population Analysis Using WinBUGS: A Hierarchical Perspective. 1 edition. Boston: Academic Press. [website](https://www.vogelwarte.ch/de/projekte/publikationen/bpa/)
+
+Packages and installation instructions
+=====
+
+## nimble (of course)
+`install.packages('nimble')`
+
+## development version of nimble (just in case it is of interest)
+`library(devtools)`
+`install_github("nimble-dev/nimble", ref = "devel", subdir = "packages/nimble")`
+
+### When installing from github, you need to be sure required packages are installed:
+`install.packages("igraph", "coda", "R6")`
+
+## mcmcplots (used for some plotting)
+`install.packages("mcmcplots")`
+
+## compareMCMCs (used for comparing MCMC performance)
+`library(devtools)`
+`install_github("nimble-dev/compareMCMCs", subdir = "compareMCMCs")`
+
+## nimbleEcology (not necessary, but useful in the future)
+`install_github("nimble-dev/nimbleEcology")`
+
+nimbleEcology may be on CRAN soon, in which case this should work:
+`install.packages("nimbleEcology")`
+
+Your suggestions
+=====
+
+I'm sure you will have suggestions for nimble.
+
+We welcome these.
+
+My first question will be if you want to get involved and contribute code or, equally importantly, documentation!
