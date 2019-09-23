@@ -30,19 +30,18 @@ knitr::opts_chunk$set(echo = TRUE,
 # First example: An occupancy model
 
 * AHM = [Applied Hierarchical Modeling in Ecology, Vol. I](https://www.mbr-pwrc.usgs.gov/pubanalysis/keryroylebook/) by Marc Kéry and J. Andrew Royle. 2015. Elsevier.
-* Most AHM examples have been converted to NIMBLE: (https://github.com/nimble-dev/AHMnimble)[https://github.com/nimble-dev/AHMnimble]
+* Most AHM examples have been converted to NIMBLE: [https://github.com/nimble-dev/AHMnimble](https://github.com/nimble-dev/AHMnimble)
 * Thanks to Marc Kéry, Andy Royle, and Mike Meredith for permission to post modified versions of their code on GitHub.
-* "Code from AHM" means the code is from the AHM code made available from the book's web site.
 * Occupancy example from section 10.4:
 
-- Simulated data
-- `M` sites.
-- Each site is visited `J` times.
-- `y[i, j]` is detection (1) or non-detection(0) for visit `j` to site `i`.
-- Explanatory variables:
+    - Simulated data
+    - `M` sites.
+    - Each site is visited `J` times.
+    - `y[i, j]` is detection (`1`) or non-detection(`0`) for visit `j` to site `i`.
+    - Explanatory variables:
 
-    - `vegHt` = Vegetation height: logistic effect on occupancy probability
-    - `wind` = Wind speed: logistic effect on occupancy probability
+        - `vegHt` = Vegetation height: logistic effect on occupancy probability
+        - `wind` = Wind speed: logistic effect on occupancy probability
 
 # Occupancy example: Load the package
 ```{r}
