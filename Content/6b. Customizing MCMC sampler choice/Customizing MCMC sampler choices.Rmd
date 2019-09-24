@@ -1,0 +1,155 @@
+---
+title: "Strategies for improving MCMC"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache = FALSE)
+library(nimble)
+library(compareMCMCs)
+library(coda)
+```
+
+2. Customize sampler choices:
+
+    - Try blocking correlated parameters.
+    - Try sampling standard deviations on a log scale.
+    - Try slice samplers instead of Metropolis-Hastings.
+    - Try multiple samplers for slow-mixing parameters.
+
+
+Example: house martin state-space model
+=====
+We will use the alternative (faster) way to write this model.
+# Code from BPA book:
+```{r}
+martin_code_alt <- nimbleCode({
+  # Priors and constraints
+  logN.est[1] ~ dnorm(5.6, 0.01)       # Prior for initial population size
+  mean.r ~ dnorm(1, 0.001)             # Prior for mean growth rate
+  sigma.proc ~ dunif(0, 1)          # Prior for sd of state process
+  sigma2.proc <- pow(sigma.proc, 2)
+  tau.proc <- pow(sigma.proc, -2)
+  sigma.obs ~ dunif(0, 1)           # Prior for sd of observation process
+  sigma2.obs <- pow(sigma.obs, 2)
+  tau.obs <- pow(sigma.obs, -2)
+  
+  # Likelihood
+  # State process
+  for (t in 1:(T-1)) {
+    logN.est[t+1] ~ dnorm(logN.est[t] + mean.r, tau.proc)
+  }
+  
+  # Observation process
+  for (t in 1:T) {
+    y[t] ~ dnorm(logN.est[t], tau.obs)
+  }
+  
+  # Population sizes on real scale
+  for (t in 1:T) {
+    N.est[t] <- exp(logN.est[t])
+  }
+})
+
+pyears <- 6 # Number of future years with predictions
+hm <- c(271, 261, 309, 318, 231, 216, 208, 226, 195, 226, 233, 209, 
+        226, 192, 191, 225, 245, 205, 191, 174, rep(NA, pyears))
+year <- 1990:(2009 + pyears)
+
+# Bundle data
+martin_data <- list(y = log(hm), T = length(year))
+## NIMBLE will handle y as data, T as a constant
+
+# Initial values
+martin_inits <- function(){
+  list(sigma.proc = runif(1, 0, 1), mean.r = rnorm(1),
+       sigma.obs = runif(1, 0, 1), 
+       logN.est = c(rnorm(1, 5.6, 0.1), 
+                    rep(NA, (length(year)-1))))
+}
+martin_model_alt <- nimbleModel(martin_code_alt,
+                                constants = martin_data,
+                                inits = martin_inits())
+
+```
+
+
+
+```{r}
+configure_nimble_like_jags <- function(model) {
+  MCMCconf <- configureMCMC(model)
+  MCMCconf$removeSamplers('sigma.proc')
+  MCMCconf$removeSamplers('sigma.obs')
+  MCMCconf$addSampler(target = 'sigma.proc', type = 'slice')
+  MCMCconf$addSampler(target = 'sigma.obs', type = 'slice')
+  MCMCconf
+}
+configure_nimble_no_conjugacy <- function(model) {
+  MCMCconf <- configureMCMC(model, useConjugacy = FALSE)
+  MCMCconf
+}
+configure_nimble_log_sigma <- function(model) {
+  MCMCconf <- configureMCMC(model)
+  MCMCconf$removeSamplers('sigma.proc')
+  MCMCconf$removeSamplers('sigma.obs')
+  MCMCconf$addSampler(target = 'sigma.proc', type = 'RW', control = list(log = TRUE))
+  MCMCconf$addSampler(target = 'sigma.obs', type = 'RW', control = list(log = TRUE))
+  MCMCconf
+}
+configure_nimble_double_sigma <- function(model) {
+  MCMCconf <- configureMCMC(model)
+  MCMCconf$addSampler(target = 'sigma.proc', type = 'RW', control = list(log = TRUE))
+  MCMCconf$addSampler(target = 'sigma.obs', type = 'RW', control = list(log = TRUE))
+  MCMCconf$setSamplers(c(1:14, 36:37, 15:35))
+  MCMCconf
+}
+
+martin <- compareMCMCs(
+  list(code = martin_code_alt,
+       constants = martin_data,
+       inits = martin_inits()),
+  MCMCs = c("jags","nimble","nimble_like_jags",
+            "nimble_no_conjugacy", "nimble_log_sigma", "nimble_double_sigma"),
+  nimbleMCMCdefs= list(nimble_like_jags = configure_nimble_like_jags,
+                       nimble_log_simga = configure_nimble_log_sigma,
+                       nimble_double_sigma = configure_nimble_double_sigma,
+                       nimble_no_conjugacy = configure_nimble_no_conjugacy),
+  MCMCcontrol = list(niter = 100000,
+                     burnin = 10000)
+)
+
+```
+
+Look at results
+=====
+```{r}
+make_MCMC_comparison_pages(c(martin_orig, martin_alt),
+                           dir = "martin_results",
+                           modelName = "martin-state-space-model")
+```
+
+Results are [here](martin_results/martin-state-space-model.html)
+
+We see:
+
+- JAGS is more efficient than nimble.  We'll address that later.
+- The alternative version of the model is more efficient for both JAGS and nimble.
+- The worst-mixing parameters are the standard deviations (sigmas).
+
+We can see the raw material of the results like this:
+
+```{r}
+martin_alt$jags_alt$metrics
+martin_alt$nimble_alt$metrics
+```

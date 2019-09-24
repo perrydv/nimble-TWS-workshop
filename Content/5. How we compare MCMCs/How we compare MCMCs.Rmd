@@ -15,13 +15,51 @@ slides > slide {
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE,
-                      cache = TRUE)
+                      cache = FALSE)
 library(nimble)
 library(compareMCMCs)
+library(coda)
+recalculate <- FALSE
 ```
 
 Mixing and computation time are both important
 =====
+
+Mixing refers to how well the MCMC samples around the posterior ("target distribution").
+
+Computation time refers to the time taken by the MCMC.
+
+Efficiency = Effective sample size / computation time.
+
+Pace = 1/Efficiency
+
+**Do not get excited about an MCMC just because it runs quickly.**
+
+Sometimes fancy samplers are too slow to be worthwhile.
+
+We ignore setup time because it is less interesting.  We don't thin because it confuses comparisons.
+
+Let's look at the occupancy example.
+
+Package `compareMCMCs`
+=====
+
+This used to be part of `nimble`.
+
+It's nearly completely re-written as a separate package.  It's [here](https://github.com/nimble-dev/compareMCMCs).
+
+There is a User Manual set up to be a package vignette [here](https://htmlpreview.github.io/?https://github.com/nimble-dev/compareMCMCs/blob/master/UserManual/compareMCMCs.html).
+
+It's not yet on CRAN, so please install from GitHub:
+
+```{r eval = FALSE}
+library(devtools)
+install_github("nimble-dev/compareMCMCs", subdir = "compareMCMCs")
+```
+
+Occupancy example
+=====
+This slide sets up the occupancy example.
 
 (This code is modified from AHM.  It is here for completeness.)
 ```{r}
@@ -226,15 +264,24 @@ occCode3 <- nimbleCode({
 )
 ```
 
-```{r}
+Running occupancy example via `compareMCMCs`
+=====
+This slide runs each case of the occupancy model via `compareMCMCs`.
 
+`compareMCMCs` times the MCMC and calculates summary metrics from the results.
 
+`compareMCMCs` can also run JAGS (support for WinBUGS/OpenBUGS and Stan is coming).
+
+```{r eval=recalculate}
 result_orig <- compareMCMCs(list(code = Section10p4_code,
                                  constants = occupancy_data,
                                  inits = occupancy_inits()),
                             MCMCs = c("nimble", "jags"),
                             MCMCcontrol = list(niter = 10000,
                                                burnin = 2000))
+result_orig <- renameMCMC(result_orig, "nimble_orig", "nimble")
+
+saveRDS(result_orig, file = "result_orig.RDS")
 
 result_dOcc <- compareMCMCs(list(code = occCode2,
                                  constants = occupancy_data,
@@ -242,6 +289,7 @@ result_dOcc <- compareMCMCs(list(code = occCode2,
                             MCMCs = c("nimble"),
                             MCMCcontrol = list(niter = 10000,
                                                burnin = 2000))
+result_dOcc <- renameMCMC(result_dOcc, "nimble_dOcc", "nimble")
 
 result_vec <- compareMCMCs(list(code = occCode3,
                                 constants = occupancy_data,
@@ -249,10 +297,116 @@ result_vec <- compareMCMCs(list(code = occCode3,
                            MCMCs = c("nimble"),
                            MCMCcontrol = list(niter = 10000,
                                               burnin = 2000))
+result_vec <- renameMCMC(result_vec, "nimble_vec", "nimble")
 
 ```
 
+Occupancy MCMC comparison results
+=====
+```{r eval=recalculate}
+make_MCMC_comparison_pages(c(result_orig, result_dOcc, result_vec), modelName = "Occupancy")
+```
 
+Results are [here](Occupancy.html)
+
+We see that:
+
+- Default nimble is more efficient that JAGS.
+- The `dOcc` nimble version is faster than default nimble.
+- The vectorized version is similar to default nimble.
+
+Look more closely at mixing
+=====
+Samples are not sequentially independent.
+
+```{r include = FALSE}
+if(!recalculate)
+  result_orig <- readRDS("result_orig.RDS")
+```
+
+Look at the entire trace plot for `mean.p`:
 ```{r}
-result_orig <- renameMCMC(result_orig, "nimble_orig", "nimble")
+i <- 1:nrow(result_orig$nimble_orig$samples)
+plot(i, result_orig$nimble_orig$samples[i, "mean.p"], pch = ".", ylab = "mean.p")
 ```
+
+Look a little closer:
+```{r}
+i <- 1001:2000
+plot(i, result_orig$nimble_orig$samples[i, "mean.p"], pch = ".", ylab = "mean.p")
+```
+
+Look really close:
+```{r}
+i <- 1001:1200
+plot(i, result_orig$nimble_orig$samples[i, "mean.p"], pch = ".", ylab = "mean.p")
+```
+
+We see both autocorrelation and Metropolis-Hastings
+rejections, which have occurred when the state does not change.  (This
+does not happen in JAGS, because it does not use Metropolis-Hastings.  You can change samplers in nimble easily.)
+
+
+What is Effective Sample Size (ESS)
+=====
+
+- *Effective sample size (ESS)* is the equivalent number of
+independent samples in an MCMC chain for one parameter.
+
+# What does "equivalent number of independent samples" mean?
+
+- If `p[i]` were drawn independently (m samples), we could say:
+
+$\mbox{Var}[\overline{p[i]}] = \mbox{Var}[ \frac{1}{m} \sum_{i = 1}^m p[i] ]= \frac{\mbox{Var}[p[i]]}{m}$
+
+- Instead, we have
+
+$\mbox{Var}[\overline{p[i]}] = \frac{\mbox{Var}[p[i]]}{\mbox{ESS}}$
+
+where ESS is the *Effective Sample Size*.
+
+```{r, ess, eval = TRUE}
+library(coda)
+effectiveSize(result_orig$nimble_orig$samples)
+```
+
+We can see that the effective sample size is considerably smaller than the number of samples.
+
+Measuring MCMC performance: MCMC efficiency
+=====
+
+We define *MCMC efficiency* as
+
+$\frac{\mbox{ESS}}{\mbox{computation time}}$
+
+- This is the number of effectively independent samples generated per time.
+- ESS is different for every parameter.
+- Computation time is the same for every parameter: the total time.
+- We do not count setup steps like model building and compilation as
+  part of computation time.  Even
+  though these take time, we are more interested in the final MCMC
+  performance.
+- One needs a reasonable sample just to get a reasonable estimate of ESS.
+- We generally do not thin when comparing methods because thinning always removes some information from a sample.  People might disagree on this choice.
+
+A single number: Minimum MCMC efficiency
+=====
+
+- We want a single number to measure the performance of an MCMC.
+- Often there are many fast-mixing parameters and one or a few
+slow-mixing ones.
+- We need all parameters to be mixed well to rely on results.
+- Therefore our single measure of efficiency is:
+
+**Net MCMC efficiency = Minimum MCMC efficiency over all parameters**
+
+- Sometimes it is easier to look graphically at **pace = 1/efficiency**.
+
+Why we don't care as much about mean MCMC efficiency
+=====
+
+- It is tempting to think mean (across parameters) of MCMC efficiency is a good measure of overall performance.
+- If you rely on mean efficiency, you could end up like the statistician who drowned in a river with an average depth of three feet.
+- If some parameters are mixing very well and others very poorly, you should not feel the results are acceptable.
+
+

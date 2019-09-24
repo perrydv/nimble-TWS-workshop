@@ -1,0 +1,248 @@
+---
+title: "Strategies for improving MCMC"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache = FALSE)
+library(nimble)
+library(compareMCMCs)
+library(coda)
+```
+
+1. Re-write the model.
+
+    - Think like a graph.
+    - Reduce computation.
+    
+2. Customize sampler choices:
+
+    - Try blocking correlated parameters.
+    - Try sampling standard deviations on a log scale.
+    - Try slice samplers instead of Metropolis-Hastings.
+    - Try multiple samplers for slow-mixing parameters.
+    
+3. Advanced: write new samplers that take advantage of particular model structures.
+
+These slides include step `1`.
+
+Example: house martin state-space model
+=====
+
+This is from BPA (Kéry and Schaub, see references slides).
+
+- House martin abundance estimates from 1990-2009
+- 6 additional years of posterior prediction are included
+- The model is density-independent.
+- There are no covariates.
+- Process noise and observation error and both normal on a log scale.
+- This is really simple but we'll pretend it isn't.
+
+Code and data
+=====
+```{r}
+martin_code <- nimbleCode({
+  # Priors and constraints
+  logN.est[1] ~ dnorm(5.6, 0.01)    # Prior for initial population size
+  mean.r ~ dnorm(1, 0.001)          # Prior for mean growth rate
+  sigma.proc ~ dunif(0, 1)          # Prior for sd of state process
+  sigma2.proc <- pow(sigma.proc, 2)
+  tau.proc <- pow(sigma.proc, -2)
+  sigma.obs ~ dunif(0, 1)           # Prior for sd of observation process
+  sigma2.obs <- pow(sigma.obs, 2)
+  tau.obs <- pow(sigma.obs, -2)
+  
+  # State process
+  for (t in 1:(T-1)){
+    r[t] ~ dnorm(mean.r, tau.proc)
+    logN.est[t+1] <- logN.est[t] + r[t]
+  }
+  
+  # Likelihood
+  # Observation process 
+  for (t in 1:T) {
+    y[t] ~ dnorm(logN.est[t], tau.obs)
+  }
+  
+  # Population sizes on real scale
+  for (t in 1:T) {
+    N.est[t] <- exp(logN.est[t])
+  }
+})
+
+# Code from BPA book:
+pyears <- 6 # Number of future years with predictions
+hm <- c(271, 261, 309, 318, 231, 216, 208, 226, 195, 226, 233, 209, 
+        226, 192, 191, 225, 245, 205, 191, 174, rep(NA, pyears))
+year <- 1990:(2009 + pyears)
+
+# Bundle data
+martin_data <- list(y = log(hm), T = length(year))
+## NIMBLE will handle y as data, T as a constant
+
+# Initial values
+martin_inits <- function(){
+  list(sigma.proc = runif(1, 0, 1), mean.r = rnorm(1),
+       sigma.obs = runif(1, 0, 1), 
+       logN.est = c(rnorm(1, 5.6, 0.1), 
+                    rep(NA, (length(year)-1))))
+}
+
+martin_model <- nimbleModel(martin_code,
+                            constants = martin_data, 
+                            inits = martin_inits())
+```
+
+Two ways to write a state-space model
+=====
+
+Two equivalent ways to write state-space models:
+
+1. Process-noises are random variables.  States are deterministic given process noises. 
+2. States are random variables.
+
+This model uses approach `1`.
+
+Think like a graph 1.
+=====
+
+What are the nodes in this model?
+
+```{r}
+martin_model$getNodeNames()
+```
+
+Think like a graph 2.
+=====
+
+What calculations are required to sample (or "update") `r[24]`?
+
+```{r}
+martin_model$getDependencies("r[24]")
+```
+
+Think like a graph 3.
+=====
+
+What calculations are required to sample `r[20]`?
+```{r}
+martin_model$getDependencies("r[20]")
+```
+
+What about `r[10]`?
+What calculations are required to sample `r[10]`?
+```{r}
+martin_model$getDependencies("r[10]")
+```
+
+Think like a graph 4.
+=====
+We see that writing a state-space model this way will be very computationally costly.  Sampling the process noise at each time requires re-calculation of the model for all subsequent times.
+
+Rewrite the model
+=====
+Here is a more efficient way to write a state-space model.
+
+```{r}
+martin_code_alt <- nimbleCode({
+  # Priors and constraints
+  logN.est[1] ~ dnorm(5.6, 0.01)       # Prior for initial population size
+  mean.r ~ dnorm(1, 0.001)             # Prior for mean growth rate
+  sigma.proc ~ dunif(0, 1)          # Prior for sd of state process
+  sigma2.proc <- pow(sigma.proc, 2)
+  tau.proc <- pow(sigma.proc, -2)
+  sigma.obs ~ dunif(0, 1)           # Prior for sd of observation process
+  sigma2.obs <- pow(sigma.obs, 2)
+  tau.obs <- pow(sigma.obs, -2)
+  
+  # Likelihood
+  # State process
+  for (t in 1:(T-1)) {
+    logN.est[t+1] ~ dnorm(logN.est[t] + mean.r, tau.proc)
+  }
+  
+  # Observation process
+  for (t in 1:T) {
+    y[t] ~ dnorm(logN.est[t], tau.obs)
+  }
+  
+  # Population sizes on real scale
+  for (t in 1:T) {
+    N.est[t] <- exp(logN.est[t])
+  }
+})
+martin_model_alt <- nimbleModel(martin_code_alt,
+                                constants = martin_data,
+                                inits = martin_inits())
+```
+
+Now we can see how this makes a lighter dependency structure:
+
+```{r}
+martin_model_alt$getDependencies('logN.est[24]')
+martin_model_alt$getDependencies('logN.est[20]')
+martin_model_alt$getDependencies('logN.est[10]')
+```
+
+Updating each latent state (now population size, not process noise) requires calculations only one time-step later.
+
+Compare performance
+=====
+```{r}
+martin_orig <- compareMCMCs(
+  list(code = martin_code,
+       constants = martin_data,
+       inits = martin_inits()),
+  MCMCs = c("nimble", "jags"),
+  MCMCcontrol = list(niter = 100000,
+                     burnin = 10000)
+)
+martin_orig <- renameMCMC(martin_orig, "nimble_orig", "nimble")
+martin_orig <- renameMCMC(martin_orig, "jags_orig", "jags")
+
+martin_alt <- compareMCMCs(
+  list(code = martin_code_alt,
+       constants = martin_data,
+       inits = martin_inits()),
+  MCMCs = c("nimble", "jags"),
+  MCMCcontrol = list(niter = 100000,
+                     burnin = 10000)
+)
+
+martin_alt <- renameMCMC(martin_alt, "nimble_alt", "nimble")
+martin_alt <- renameMCMC(martin_alt, "jags_alt", "jags")
+```
+
+Look at results
+=====
+```{r}
+make_MCMC_comparison_pages(c(martin_orig, martin_alt),
+                           dir = "martin_results",
+                           modelName = "martin-state-space-model")
+```
+
+Results are [here](martin_results/martin-state-space-model.html)
+
+We see:
+
+- JAGS is more efficient than nimble.  We'll address that later.
+- The alternative version of the model is more efficient for both JAGS and nimble.
+- The worst-mixing parameters are the standard deviations (sigmas).
+
+We can see the raw material of the results like this:
+
+```{r}
+martin_alt$jags_alt$metrics
+martin_alt$nimble_alt$metrics
+```

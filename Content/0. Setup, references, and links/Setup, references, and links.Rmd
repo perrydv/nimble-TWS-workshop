@@ -74,6 +74,11 @@ Packages and installation instructions
 `library(devtools)`
 `install_github("nimble-dev/compareMCMCs", subdir = "compareMCMCs")`
 
+The package is [here](https://github.com/nimble-dev/compareMCMCs).
+
+There is a User Manual set up to be a package vignette [here](https://htmlpreview.github.io/?https://github.com/nimble-dev/compareMCMCs/blob/master/UserManual/compareMCMCs.html).
+
+
 ## nimbleEcology (not necessary, but useful in the future)
 `install_github("nimble-dev/nimbleEcology")`
 
