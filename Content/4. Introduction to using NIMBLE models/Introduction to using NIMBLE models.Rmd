@@ -46,6 +46,7 @@ Let's use a really simple model:
 - Linear regression with 4 data points.
 
 ```{r}
+set.seed(2468)
 mc <- nimbleCode({
     intercept ~ dnorm(0, sd = 1000)
     slope ~ dnorm(0, sd = 1000)
@@ -126,7 +127,15 @@ model$x
 
 This can be done with a compiled model too.
 
-Get names of nodes on the graph
+You can even get and set data values
+=====
+```{r}
+model$y
+model$y[1] <- 0.8
+model$y
+```
+
+Get names of nodes in the graph
 =====
 ```{r}
 model$getNodeNames()
@@ -187,7 +196,7 @@ mc2 <- nimbleCode({
     intercept ~ dnorm(0, sd = 1000)
     slope ~ dnorm(0, sd = 1000)
     sigma ~ dunif(0, 100)
-    predicted.y[1:4] <- intercept + slope * x[1:4]
+    predicted.y[1:4] <- intercept + slope * x[1:4] #vectorized
     for(i in 1:4) {
         y[i] ~ dnorm(predicted.y[i], sd = sigma)
     }
@@ -246,9 +255,9 @@ Data values are protected from simulation unless you are sure.
 
 ```{r}
 model$y
-model$simulate('y')
+model$simulate('y') ## Will not over-write data nodes
 model$y
-model$simulate('y', includeData = TRUE)
+model$simulate('y', includeData = TRUE) ## will over-write data nodes
 model$y
 ```
 
@@ -281,7 +290,7 @@ model3$getNodeNames()
 
 NIMBLE has created nodes in the role of `predicted.y[i]`.
 
-These are called *lifted nodes*.  There were created by lifting an expression out of one distribution and creating a deterministic node for that expression.
+These are called *lifted nodes*.  There were created by lifting an expression out of a parameter for a distribution and creating a deterministic node for that expression.
 
 
 Model-generic programming
