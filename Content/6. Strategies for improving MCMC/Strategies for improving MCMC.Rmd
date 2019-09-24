@@ -19,6 +19,7 @@ knitr::opts_chunk$set(echo = TRUE,
 library(nimble)
 library(compareMCMCs)
 library(coda)
+recalculate <- TRUE
 ```
 
 1. Re-write the model.
@@ -199,7 +200,7 @@ Updating each latent state (now population size, not process noise) requires cal
 
 Compare performance
 =====
-```{r}
+```{r eval=recalculate}
 martin_orig <- compareMCMCs(
   list(code = martin_code,
        constants = martin_data,
@@ -226,13 +227,27 @@ martin_alt <- renameMCMC(martin_alt, "jags_alt", "jags")
 
 Look at results
 =====
-```{r}
+```{r echo=FALSE, eval=recalculate}
 make_MCMC_comparison_pages(c(martin_orig, martin_alt),
-                           dir = "martin_results",
+                           dir = "martin_results_with_slides",
                            modelName = "martin-state-space-model")
 ```
 
-Results are [here](martin_results/martin-state-space-model.html)
+```{r include=FALSE, eval=recalculate}
+martin_alt$jags_alt$samples <- NULL
+martin_alt$nimble_alt$samples <- NULL
+saveRDS(martin_alt, file=file.path("martin_results_with_slides", "martin_alt.RDS"))
+```
+
+```{r eval=FALSE}
+make_MCMC_comparison_pages(c(martin_orig, martin_alt),
+                           dir = "martin_results-user",
+                           modelName = "martin-state-space-model")
+```
+
+Results generated with these slides are [here](martin_results_with_slides/martin-state-space-model.html)
+
+Results if you run it yourself are [here](martin_results_user/martin-state-space-model.html)
 
 We see:
 
@@ -240,7 +255,13 @@ We see:
 - The alternative version of the model is more efficient for both JAGS and nimble.
 - The worst-mixing parameters are the standard deviations (sigmas).
 
+Raw results
+=====
 We can see the raw material of the results like this:
+
+```{r include=FALSE}
+martin_alt <- readRDS(file.path("martin_results_with_slides", "martin_alt.RDS"))
+```
 
 ```{r}
 martin_alt$jags_alt$metrics

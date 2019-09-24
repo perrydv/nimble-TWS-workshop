@@ -19,6 +19,7 @@ knitr::opts_chunk$set(echo = TRUE,
 library(nimble)
 library(compareMCMCs)
 library(coda)
+recalculate <- FALSE
 ```
 
 2. Customize sampler choices:
@@ -32,7 +33,8 @@ library(coda)
 Example: house martin state-space model
 =====
 We will use the alternative (faster) way to write this model.
-# Code from BPA book:
+
+Code is modified from BPA book:
 ```{r}
 martin_code_alt <- nimbleCode({
   # Priors and constraints
@@ -85,7 +87,8 @@ martin_model_alt <- nimbleModel(martin_code_alt,
 ```
 
 
-
+Function for jags-like sampler configuration
+=====
 ```{r}
 configure_nimble_like_jags <- function(model) {
   MCMCconf <- configureMCMC(model)
@@ -95,10 +98,20 @@ configure_nimble_like_jags <- function(model) {
   MCMCconf$addSampler(target = 'sigma.obs', type = 'slice')
   MCMCconf
 }
+```
+
+Function for no-conjugacy sampler configuration
+=====
+```{r}
 configure_nimble_no_conjugacy <- function(model) {
   MCMCconf <- configureMCMC(model, useConjugacy = FALSE)
   MCMCconf
 }
+```
+
+Function for sampler configuration handling sigmas on log scale
+=====
+```{r}
 configure_nimble_log_sigma <- function(model) {
   MCMCconf <- configureMCMC(model)
   MCMCconf$removeSamplers('sigma.proc')
@@ -107,6 +120,11 @@ configure_nimble_log_sigma <- function(model) {
   MCMCconf$addSampler(target = 'sigma.obs', type = 'RW', control = list(log = TRUE))
   MCMCconf
 }
+```
+
+Function for sampler configuration with two samplers for each sigma.
+=====
+```{r}
 configure_nimble_double_sigma <- function(model) {
   MCMCconf <- configureMCMC(model)
   MCMCconf$addSampler(target = 'sigma.proc', type = 'RW', control = list(log = TRUE))
@@ -114,7 +132,11 @@ configure_nimble_double_sigma <- function(model) {
   MCMCconf$setSamplers(c(1:14, 36:37, 15:35))
   MCMCconf
 }
+```
 
+Run the comparison
+=====
+```{r}
 martin <- compareMCMCs(
   list(code = martin_code_alt,
        constants = martin_data,
@@ -128,28 +150,35 @@ martin <- compareMCMCs(
   MCMCcontrol = list(niter = 100000,
                      burnin = 10000)
 )
-
 ```
 
 Look at results
 =====
-```{r}
-make_MCMC_comparison_pages(c(martin_orig, martin_alt),
-                           dir = "martin_results",
+```{r include=FALSE, eval=recalculate}
+make_MCMC_comparison_pages(martin,
+                           dir = "martin_results_with_slides",
                            modelName = "martin-state-space-model")
 ```
 
-Results are [here](martin_results/martin-state-space-model.html)
+```{r include=FALSE}
+for(v in names(martin)) {
+  martin[[v]]$samples <- NULL
+}
+saveRDS(martin, file = file.path("martin_results_with_slides", "martin.RDS"))
+```
 
-We see:
+```{r eval=FALSE}
+make_MCMC_comparison_pages(martin,
+                           dir = "martin_results_user",
+                           modelName = "martin-state-space-model")
+```
 
-- JAGS is more efficient than nimble.  We'll address that later.
-- The alternative version of the model is more efficient for both JAGS and nimble.
-- The worst-mixing parameters are the standard deviations (sigmas).
+Results are [here](martin_results_with_slides/martin-state-space-model.html)
 
-We can see the raw material of the results like this:
+```{r include=FALSE}
+martin <- readRDS(file.path("martin_results_with_slides", "martin.RDS"))
+```
 
 ```{r}
-martin_alt$jags_alt$metrics
-martin_alt$nimble_alt$metrics
+combineMetrics(martin)
 ```
