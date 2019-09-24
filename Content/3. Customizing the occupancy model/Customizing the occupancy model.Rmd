@@ -169,7 +169,7 @@ Prob(Detection history) = Prob(Detection history | Occupied) Prob(Occupied) + Pr
 
 Hybrid math / code expression:
 \[
-P(y[i,1:J] | \psi, p[i, 1:J]) = \psi \prod_{j=1}^J \mbox{dbern}(y[i,j] | p[i,j]) + (1-\psi) I(\mbox{all } y[i, j] \mbox{ = 0})
+P(y[i,1:J] ~|~ \psi, p[i, 1:J]) = \psi \prod_{j=1}^J \mbox{dbern}(y[i,j] ~|~ p[i,j]) + (1-\psi) I(\mbox{all } y[i, j] \mbox{ = 0})
 \]
 
 ```{r}
@@ -198,6 +198,14 @@ dOcc_v <- nimbleFunction(
   }
 )
 ```
+
+Key points:
+
+- A `nimbleFunction` is defined by providing an R function as an argument.
+- The R function has special syntax for argument types and return type.
+- The `nimbleFunction` can be compiled if it is limited to basic math, distributions, for loops, if-then-else, and a few other basics.
+- "compiled" means that nimble will generate C++, compile that, and make it available for use from R.
+
 
 Run MCMC with the new version:
 =====
