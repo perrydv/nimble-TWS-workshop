@@ -1,5 +1,5 @@
 ---
-title: "Strategies for improving MCMC"
+title: "Customizing sampler choices (N-mixture example)"
 author: "Perry de Valpine"
 date: "September 2019"
 output:
@@ -19,7 +19,7 @@ knitr::opts_chunk$set(echo = TRUE,
 library(nimble)
 library(compareMCMCs)
 library(coda)
-recalculate <- FALSE
+recalculate <- TRUE
 ```
 
 2. Customize sampler choices:
@@ -30,155 +30,374 @@ recalculate <- FALSE
     - Try multiple samplers for slow-mixing parameters.
 
 
-Example: house martin state-space model
+Example: N-mixture model
 =====
-We will use the alternative (faster) way to write this model.
 
-Code is modified from BPA book:
+- From AHM (Kéry & Royle), Chapter 6, Section 6.4
+- A simulated example
+- M = 100 sites
+- J = 3 sampling occasions
+- vegHt = vegetation height, covariate for abundance
+- wind = wind speed, covariate for detection
+
+Simulation code from AHM
+=====
 ```{r}
-martin_code_alt <- nimbleCode({
-  # Priors and constraints
-  logN.est[1] ~ dnorm(5.6, 0.01)       # Prior for initial population size
-  mean.r ~ dnorm(1, 0.001)             # Prior for mean growth rate
-  sigma.proc ~ dunif(0, 1)          # Prior for sd of state process
-  sigma2.proc <- pow(sigma.proc, 2)
-  tau.proc <- pow(sigma.proc, -2)
-  sigma.obs ~ dunif(0, 1)           # Prior for sd of observation process
-  sigma2.obs <- pow(sigma.obs, 2)
-  tau.obs <- pow(sigma.obs, -2)
-  
-  # Likelihood
-  # State process
-  for (t in 1:(T-1)) {
-    logN.est[t+1] ~ dnorm(logN.est[t] + mean.r, tau.proc)
-  }
-  
-  # Observation process
-  for (t in 1:T) {
-    y[t] ~ dnorm(logN.est[t], tau.obs)
-  }
-  
-  # Population sizes on real scale
-  for (t in 1:T) {
-    N.est[t] <- exp(logN.est[t])
-  }
-})
+## From AHM Chapter 6, section 6.4
+## Adaptation for NIMBLE by Jacob Levine and Perry de Valpine
 
-pyears <- 6 # Number of future years with predictions
-hm <- c(271, 261, 309, 318, 231, 216, 208, 226, 195, 226, 233, 209, 
-        226, 192, 191, 225, 245, 205, 191, 174, rep(NA, pyears))
-year <- 1990:(2009 + pyears)
+# 6.4 A slightly more complex N-mixture model with covariates
+# ------------------------------------------------------------------------
+DO_PLOT <- TRUE
+# Choose sample sizes and prepare obs. data array y
+set.seed(1)                   # So we all get same data set
+M <- 100                      # Number of sites
+J <- 3                        # Number of repeated abundance measurements
+C <- matrix(NA, nrow = M, ncol = J) # to contain the observed data
+
+# Create a covariate called vegHt
+vegHt <- sort(runif(M, -1, 1)) # sort for graphical convenience
+
+# Choose parameter values for abundance model and compute lambda
+beta0 <- 0                    # Log-scale intercept
+beta1 <- 2                    # Log-scale slope for vegHt
+lambda <- exp(beta0 + beta1 * vegHt) # Expected abundance
+if(DO_PLOT) plot(vegHt, lambda, type = "l", lwd = 3)  # Expected abundance
+
+# Draw local abundance and look at data so far
+N <- rpois(M, lambda)
+if(DO_PLOT) points(vegHt, N)              # Add realized abundance to plot
+if(DO_PLOT) table(N)
+
+# Plot the true system state (Fig. 6�2, left)
+if(DO_PLOT) {
+    par(mfrow = c(1, 3), mar = c(5,5,2,2), cex.axis = 1.5, cex.lab = 1.5)
+    plot(vegHt, N, xlab="Vegetation height", ylab="True abundance (N)", frame = F, cex = 1.5)
+    lines(seq(-1,1,,100), exp(beta0 + beta1* seq(-1,1,,100)), lwd=3, col = "red")
+}
+
+# Create a covariate called wind
+wind <- array(runif(M * J, -1, 1), dim = c(M, J))
+
+# Choose parameter values for measurement error model and compute detectability
+alpha0 <- -2                        # Logit-scale intercept
+alpha1 <- -3                        # Logit-scale slope for wind
+p <- plogis(alpha0 + alpha1 * wind) # Detection probability
+if(DO_PLOT) plot(p ~ wind, ylim = c(0,1))       # Look at relationship
+
+# Take J = 3 abundance measurements at each site
+for(j in 1:J) {
+  C[,j] <- rbinom(M, N, p[,j])
+}
+
+# Plot observed data and effect of wind on det. probability (Fig. 6�2, middle)
+if(DO_PLOT) {
+    plot(wind, C/max(C), xlab="Wind", ylab="Scaled counts: C/max(C)", frame = F, cex = 1.5)
+    lines(seq(-1,1,,100), plogis(alpha0 + alpha1*seq(-1,1,,100)), lwd=3, col="red")
+}
+
+# Expected (lambda) and realized abundance (N) and measurements (C)
+cbind(lambda=round(lambda,2), N=N, C1=C[,1], C2=C[,2], C3=C[,3])
+
+
+# Create factors
+time <- matrix(rep(as.character(1:J), M), ncol = J, byrow = TRUE)
+hab <- c(rep("A", 33), rep("B", 33), rep("C", 34))  # assumes M = 100
 
 # Bundle data
-martin_data <- list(y = log(hm), T = length(year))
-## NIMBLE will handle y as data, T as a constant
+win.data <- list(C = C, M = nrow(C), J = ncol(C), wind = wind, vegHt = vegHt, hab = as.numeric(factor(hab)), XvegHt = seq(-1, 1,, 100), Xwind = seq(-1, 1,,100) )
+str(win.data)
+```
 
+Model code
+=====
+```{r}
+require(nimble)
+# Specify model in BUGS language
+# This corresponds to "model2.txt" in original AHM code.
+Section6p4_code <- nimbleCode( {
+    # Priors
+    for(k in 1:3) {                # Loop over 3 levels of hab or time factors
+      alpha0[k] ~ dunif(-10, 10) # Detection intercepts
+      alpha1[k] ~ dunif(-10, 10) # Detection slopes
+      beta0[k] ~ dunif(-10, 10)  # Abundance intercepts
+      beta1[k] ~ dunif(-10, 10)  # Abundance slopes
+    }
+    
+    # Likelihood
+    # Ecological model for true abundance
+    for (i in 1:M){
+      N[i] ~ dpois(lambda[i])
+      log(lambda[i]) <- beta0[hab[i]] + beta1[hab[i]] * vegHt[i]
+      # Some intermediate derived quantities
+      critical[i] <- step(2-N[i])# yields 1 whenever N is 2 or less
+      z[i] <- step(N[i]-0.5)     # Indicator for occupied site
+      # Observation model for replicated counts
+      for (j in 1:J){
+        C[i,j] ~ dbin(p[i,j], N[i])
+        logit(p[i,j]) <- alpha0[j] + alpha1[j] * wind[i,j]
+        }
+    }
+    
+    # Derived quantities; unnececssary when running for inference purpose
+    Nocc <- sum(z[1:100])         # Number of occupied sites among sample of M
+    Ntotal <- sum(N[1:100])       # Total population size at M sites combined
+    Nhab[1] <- sum(N[1:33])  # Total abundance for sites in hab A
+    Nhab[2] <- sum(N[34:66]) # Total abundance for sites in hab B
+    Nhab[3] <- sum(N[67:100])# Total abundance for sites in hab C
+    # We omit these derived quantities because they are direct calculations 
+    # that can be done after the MCMC.
+    # for(k in 1:100){         # Predictions of lambda and p ...
+    #   for(level in 1:3){    #    ... for each level of hab and time factors
+    #     lam.pred[k, level] <- exp(beta0[level] + beta1[level] * XvegHt[k])
+    #     logit(p.pred[k, level]) <- alpha0[level] + alpha1[level] * Xwind[k]
+    #     }
+    #   }
+    N.critical <- sum(critical[1:100]) # Number of populations with critical size
+  })
+```
+
+Create inits and build model
+=====
+```{r}
 # Initial values
-martin_inits <- function(){
-  list(sigma.proc = runif(1, 0, 1), mean.r = rnorm(1),
-       sigma.obs = runif(1, 0, 1), 
-       logN.est = c(rnorm(1, 5.6, 0.1), 
-                    rep(NA, (length(year)-1))))
-}
-martin_model_alt <- nimbleModel(martin_code_alt,
-                                constants = martin_data,
-                                inits = martin_inits())
+Nst <- apply(C, 1, max)+1   # Important to give good inits for latent N
+inits <- function() list(N = Nst, 
+                         alpha0 = rnorm(3), 
+                         alpha1 = rnorm(3), 
+                         beta0 = rnorm(3), 
+                         beta1 = rnorm(3))
+
+# Parameters monitored
+params <- c("alpha0", "alpha1", "beta0", "beta1", "Nocc", "Ntotal", "Nhab", "N.critical") 
+
+Nmix_model <- nimbleModel(Section6p4_code,
+                          constants = win.data,
+                          inits = inits())
 
 ```
 
-
-Function for jags-like sampler configuration
+Run MCMC with default sampler configuration:
 =====
 ```{r}
-configure_nimble_like_jags <- function(model) {
+samples_default <- nimbleMCMC(Section6p4_code,
+                              inits = inits,
+                              constants = win.data,
+                              niter = 20000,
+                              nburnin = 2000)
+```
+
+We are interested in the actual parametres (alphas, betas), not derived values (N's).
+
+Thinking about sampler configuration
+=====
+
+1. What parameters mix most slowly?
+```{r}
+require(coda)
+effectiveSize(samples_default)
+```
+
+We see the beta0[1], beta0[3], and beta1[3] mix most slowly.  What does that look like in  a trace plot?
+
+```{r}
+inds <- 1001:6000 ## look at 5000 iterations
+plot(samples_default[inds, 'beta0[1]'], pch = '.')
+```
+
+2. Are there posterior correlations?
+
+```{r}
+cor(samples_default)
+```
+
+There are some strong correlations among slope-intercept pairs.
+
+```{r}
+inds <- seq(1, nrow(samples_default), by = 10)
+plot(samples_default[inds, 'beta0[1]'], samples_default[inds, 'beta1[1]'], pch = '.')
+```
+
+Let's set up block samplers are slope-intercept pairs.
+
+Customizing sampler configuration
+=====
+
+We will
+
+1. Build the model.
+2. Make a default sampler configuration and look at the sampler assignments.
+3. Remove samplers we don't need.
+4. Add block samplers that we want to try.
+5. Build the MCMC, compile and run.
+6. Look at effective sample size and computation time.
+
+Build the model
+=====
+```{r}
+Nmix_model <- nimbleModel(Section6p4_code,
+                          constants = win.data,
+                          inits = inits())
+```
+
+Make default sampler configuration
+=====
+```{r}
+MCMCconf <- configureMCMC(Nmix_model)
+MCMCconf$printSamplers()
+```
+
+Remove samplers we don't want
+=====
+```{r}
+MCMCconf$removeSamplers('alpha0')
+MCMCconf$removeSamplers('alpha1')
+MCMCconf$removeSamplers('beta0')
+MCMCconf$removeSamplers('beta1')
+MCMCconf$printSamplers()
+```
+
+Add new samplers
+=====
+```{r}
+MCMCconf$addSampler(target = c('beta0[1]', 'beta1[1]'), type = "RW_block")
+MCMCconf$addSampler(target = c('beta0[2]', 'beta1[2]'), type = "RW_block")
+MCMCconf$addSampler(target = c('beta0[3]', 'beta1[3]'), type = "RW_block")
+MCMCconf$addSampler(target = c('alpha0[1]', 'alpha1[1]'), type = "RW_block")
+MCMCconf$addSampler(target = c('alpha0[2]', 'alpha1[2]'), type = "RW_block")
+MCMCconf$addSampler(target = c('alpha0[3]', 'alpha1[3]'), type = "RW_block")
+MCMCconf$printSamplers()
+```
+(We could get these target node names from the model to make this more generic.)
+
+Build, compile and run
+=====
+```{r}
+MCMC <- buildMCMC(MCMCconf)
+compiled <- compileNimble(Nmix_model, MCMC) ## illustrate compiling both in one step
+new_samples <- runMCMC(compiled$MCMC, niter = 20000, nburnin = 2000)
+```
+
+Look at effective sample size
+=====
+```{r}
+effectiveSize(new_samples)
+```
+
+Wow, that looks better.  Let's make the sample trace plot as above:
+
+```{r}
+inds <- 1001:6000
+plot(new_samples[inds, 'beta0[1]'], pch = '.') ## much better!
+```
+
+**Was it worth the computational cost?**
+
+Automating the process of comparing MCMCs using `compareMCMCs`
+=====
+
+1. Write functions to create any custom configurations of interest.
+2. Build, compile and run through `compareMCMCs` for one or more cases.
+
+     - `compareMCMCs` times multiple methods, including JAGS, and calculates comparison metrics.
+     - Multiple MCMCs that use the same model can be run.
+     - Multiple results can be combined.
+     - figures and html showing comparison results can be generated.
+
+MCMC methods to compare
+=====
+
+Let's try the following methods:
+
+- Blocking using automated factor slice sampler (AFSS)
+- Blocking using random-walk block sampler
+
+    - use 2 trials per iteration
+    
+
+
+Function to create custom MCMC configurations
+=====
+```{r}
+configure_nimbleAFSS <- function(model) {
   MCMCconf <- configureMCMC(model)
-  MCMCconf$removeSamplers('sigma.proc')
-  MCMCconf$removeSamplers('sigma.obs')
-  MCMCconf$addSampler(target = 'sigma.proc', type = 'slice')
-  MCMCconf$addSampler(target = 'sigma.obs', type = 'slice')
+  MCMCconf$removeSamplers('alpha0')
+  MCMCconf$removeSamplers('alpha1')
+  MCMCconf$removeSamplers('beta0')
+  MCMCconf$removeSamplers('beta1')
+  MCMCconf$addSampler(target = c('beta0[1]', 'beta1[1]'), type = "AF_slice")
+  MCMCconf$addSampler(target = c('beta0[2]', 'beta1[2]'), type = "AF_slice")
+  MCMCconf$addSampler(target = c('beta0[3]', 'beta1[3]'), type = "AF_slice")
+  MCMCconf$addSampler(target = c('alpha0[1]', 'alpha1[1]'), type = "AF_slice")
+  MCMCconf$addSampler(target = c('alpha0[2]', 'alpha1[2]'), type = "AF_slice")
+  MCMCconf$addSampler(target = c('alpha0[3]', 'alpha1[3]'), type = "AF_slice")
   MCMCconf
 }
-```
 
-Function for no-conjugacy sampler configuration
-=====
-```{r}
-configure_nimble_no_conjugacy <- function(model) {
-  MCMCconf <- configureMCMC(model, useConjugacy = FALSE)
-  MCMCconf
-}
-```
-
-Function for sampler configuration handling sigmas on log scale
-=====
-```{r}
-configure_nimble_log_sigma <- function(model) {
+configure_nimbleRWB <- function(model) {
   MCMCconf <- configureMCMC(model)
-  MCMCconf$removeSamplers('sigma.proc')
-  MCMCconf$removeSamplers('sigma.obs')
-  MCMCconf$addSampler(target = 'sigma.proc', type = 'RW', control = list(log = TRUE))
-  MCMCconf$addSampler(target = 'sigma.obs', type = 'RW', control = list(log = TRUE))
+  MCMCconf$removeSamplers('alpha0')
+  MCMCconf$removeSamplers('alpha1')
+  MCMCconf$removeSamplers('beta0')
+  MCMCconf$removeSamplers('beta1')
+  MCMCconf$addSampler(target = c('beta0[1]', 'beta1[1]'), type = "RW_block", control = list(trials = 2))
+  MCMCconf$addSampler(target = c('beta0[2]', 'beta1[2]'), type = "RW_block", control = list(trials = 2))
+  MCMCconf$addSampler(target = c('beta0[3]', 'beta1[3]'), type = "RW_block", control = list(trials = 2))
+  MCMCconf$addSampler(target = c('alpha0[1]', 'alpha1[1]'), type = "RW_block", control = list(trials = 2))
+  MCMCconf$addSampler(target = c('alpha0[2]', 'alpha1[2]'), type = "RW_block", control = list(trials = 2))
+  MCMCconf$addSampler(target = c('alpha0[3]', 'alpha1[3]'), type = "RW_block", control = list(trials = 2))
   MCMCconf
 }
+
 ```
 
-Function for sampler configuration with two samplers for each sigma.
+Call `compareMCMCs`
 =====
-```{r}
-configure_nimble_double_sigma <- function(model) {
-  MCMCconf <- configureMCMC(model)
-  MCMCconf$addSampler(target = 'sigma.proc', type = 'RW', control = list(log = TRUE))
-  MCMCconf$addSampler(target = 'sigma.obs', type = 'RW', control = list(log = TRUE))
-  MCMCconf$setSamplers(c(1:14, 36:37, 15:35))
-  MCMCconf
-}
-```
-
-Run the comparison
-=====
-```{r}
-martin <- compareMCMCs(
-  list(code = martin_code_alt,
-       constants = martin_data,
-       inits = martin_inits()),
-  MCMCs = c("jags","nimble","nimble_like_jags",
-            "nimble_no_conjugacy", "nimble_log_sigma", "nimble_double_sigma"),
-  nimbleMCMCdefs= list(nimble_like_jags = configure_nimble_like_jags,
-                       nimble_log_simga = configure_nimble_log_sigma,
-                       nimble_double_sigma = configure_nimble_double_sigma,
-                       nimble_no_conjugacy = configure_nimble_no_conjugacy),
-  MCMCcontrol = list(niter = 100000,
-                     burnin = 10000)
+```{r echo=TRUE, eval = recalculate}
+Nmix_results <- compareMCMCs(
+  list(code = Section6p4_code,
+       constants = win.data,
+       inits = inits()),
+  monitors = params,
+  MCMCs = c("jags", "nimble", "nimbleAFSS", "nimbleRWB"),
+  nimbleMCMCdefs = list(nimbleAFSS = configure_nimbleAFSS,
+                        nimbleRWB = configure_nimbleRWB),
+  MCMCcontrol = list(niter = 50000,
+                     burnin = 5000)
 )
 ```
 
-Look at results
+Make HTML comparison pages
 =====
-```{r include=FALSE, eval=recalculate}
-make_MCMC_comparison_pages(martin,
-                           dir = "martin_results_with_slides",
-                           modelName = "martin-state-space-model")
-```
-
-```{r include=FALSE}
-for(v in names(martin)) {
-  martin[[v]]$samples <- NULL
-}
-saveRDS(martin, file = file.path("martin_results_with_slides", "martin.RDS"))
+```{r include = FALSE, eval = recalculate}
+make_MCMC_comparison_pages(Nmix_results,
+                           dir = "Nmix_results_with_slides",
+                           modelName = "N-mixture")
 ```
 
 ```{r eval=FALSE}
-make_MCMC_comparison_pages(martin,
-                           dir = "martin_results_user",
-                           modelName = "martin-state-space-model")
+make_MCMC_comparison_pages(Nmix_results,
+                           dir = "Nmix_results_user",
+                           modelName = "N-mixture")
 ```
 
-Results are [here](martin_results_with_slides/martin-state-space-model.html)
 
-```{r include=FALSE}
-martin <- readRDS(file.path("martin_results_with_slides", "martin.RDS"))
+Results with the slides are [here](Nmix_results_with_slides/N-mixture.html).
+
+Results if you run it yourself are [here](Nmix_results_user/N-mixture.html).
+
+```{r include = FALSE, eval=recalculate}
+for(v in names(Nmix_results))
+  Nmix_results$samples <- NULL
+saveRDS(Nmix_results, file = file.path("Nmix_results_with_slides", "Nmix_results.RDS"))
 ```
 
+```{r include = FALSE, eval=!recalculate}
+Nmix_results <- readRDS(file.path("Nmix_results_with_slides", "Nmix_results.RDS"))
+```
+
+Look at raw metrics
+=====
 ```{r}
-combineMetrics(martin)
+combineMetrics(Nmix_results)
 ```
