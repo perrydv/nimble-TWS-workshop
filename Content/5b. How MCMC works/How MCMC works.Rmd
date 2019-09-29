@@ -1,0 +1,293 @@
+---
+title: "How MCMC works"
+author: "Perry de Valpine"
+date: "September 2019"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+---
+<style>
+slides > slide {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache = TRUE)
+library(nimble)
+```
+
+Simple example: linear regression
+=====
+
+- We want a toy example that is easy to think about.
+- This example lacks random effects (aka latent states, or other terms).
+- For estimation, assume we know residual standard deviation so we can look at two-dimensional posteriors (slope, intercept).
+
+```{r}
+lmCode <- nimbleCode({
+  sigma ~ dunif(0, 20)
+  intercept ~ dnorm(0, sd = 100)
+  slope ~ dnorm(0, sd = 100)
+  for(i in 1:n) {
+    y[i] ~ dnorm(intercept + slope * x[i], sd = sigma)
+  }
+})
+n <- 5
+lmModel <- nimbleModel(lmCode, 
+                       constants = list(n = n))
+lmModel$slope <- 0.6
+lmModel$intercept <- 10
+lmModel$sigma <- 0.2
+lmModel$x <- seq(0, 1, length = n)
+lmModel$calculate()
+set.seed(0)
+lmModel$simulate('y')
+lmModel$setData('y')
+{
+  plot(lmModel$x, lmModel$y, pch = 19)
+  abline(lm(lmModel$y ~ lmModel$x))
+}
+```
+
+Simple example: direct calculation of posterior
+=====
+
+Bayes Law (conditional probability)
+
+\[
+[\mbox{parameters | data}] = \frac{[\mbox{data | parameters}] [\mbox{parameters}]}{[\mbox{data}]}
+\]
+
+- $[\cdot]$ indicates probability density or mass.
+- Denominator is hard to calculate but it is a constant.
+- Since there are no random effects, we can calculate the posterior up to a constant easily. This is the numerator of Bayes Law.
+- (We could do some math and obtain closed-form (analytical) expressions for the posterior in this simple case.)
+- The goal here is to see what we are aiming for with Monte Carlo methods.
+- I will refer to $[\mbox{data | parameters}][\mbox{parameters}] = [\mbox{data, parameters}]$ as the "model calculations."
+
+Simple example: direct calculation of posterior
+=====
+```{r}
+log_posterior_numerator <- function(params) {
+  lmModel$intercept <- params[1]
+  lmModel$slope <- params[2]
+  lmModel$calculate()
+}
+optim_map <- optim(c(10, 0.8), log_posterior_numerator, control = list(fnscale = -1))
+optim_map$par
+lmFit <- lm(lmModel$y ~ lmModel$x)
+lmCoef <- coefficients(summary(lm(lmModel$y ~ lmModel$x))) ## Check that they match mle.
+lmCoef
+## Make a grid +/- 3 standard errors around the MLE
+intercept_grid <- lmCoef['(Intercept)', 'Estimate'] +
+  lmCoef['(Intercept)', 'Std. Error'] * seq(-3, 3, length = 21)
+slope_grid <- lmCoef['lmModel$x', 'Estimate'] +
+  lmCoef['lmModel$x', 'Std. Error'] * seq(-3, 3, length = 21)
+llh_surface <- matrix(0, nrow = length(intercept_grid), 
+                      ncol = length(slope_grid))
+for(i in seq_along(intercept_grid))
+  for(j in seq_along(slope_grid))
+    llh_surface[i, j] <- log_posterior_numerator(c(intercept_grid[i], slope_grid[j]))
+```
+
+Make a log posterior density plot. In this case it is essentially the same as a log likelihood plot.
+```{r}
+contour(intercept_grid, slope_grid, llh_surface, 
+        levels = optim_map$value - 0.01 - 0:5,
+        main = "posterior density contours",
+        xlab = "intercept", ylab = "slope")
+```
+
+
+Simple example: Monte Carlo approximation to the posterior
+=====
+With many dimensions of parameters (including random effects or latent states), we want to approximate the posterior density with a sample from it.
+
+```{r}
+library(mvtnorm)
+## we will "cheat" and use the mle
+samples <- rmvnorm(1000, mean = lmCoef[, "Estimate"], sigma = vcov(lmFit))
+{
+  contour(intercept_grid, slope_grid, llh_surface, 
+        levels = optim_map$value - 0.01 - 0:5,
+        main = "posterior log density contours",
+        xlab = "intercept", ylab = "slope")
+  points(samples, pch = '.', col = 'red')
+}
+```
+
+
+One-dimensional MCMC: Conditional posterior surface
+=====
+
+- Say we know (or are interested in) slope = 0.2.
+- The log posterior density for intercept, up to a constant, is:
+
+```{r}
+intercept_grid_given_slope <- seq(10.1, 10.6, length = 31)
+llh_surface_given_slope <- apply(matrix(intercept_grid_given_slope), 1, 
+                                 function(int) log_posterior_numerator(c(int, 0.2)))
+plot(intercept_grid_given_slope, exp(llh_surface_given_slope), type = 'l',
+     main = "Conditional posterior density (up to a constant) for slope = 0.2",
+     ylab = "Conditional posterior density (up to a constant)",
+     xlab = "intercept")
+```
+
+How could we generate a sample from this based only on being able to calculate its (relative) height?
+
+One-dimensional MCMC: generating a sequential sample 
+=====
+
+- MCMC generates a sequentially dependent sample whose stationary distribution is the "target" distribution (e.g. posterior).
+
+- There are lots of ways to do this, all within the MCMC family of algorithms.
+
+- Computational cost is in $[\mbox{data | parameters}]$.
+
+- Usually only the part of $[\mbox{data | parameters}]$ that involves a particular parameter(s) (e.g. intercept) needs to be calculated.
+
+- Some methods also use derivatives of $[\mbox{data | parameters}]$.  (These aren't in `nimble` yet but will be in the future.)
+
+- Different methods require different numbers of calculations of $[\mbox{data | parameters}]$, so some are slow and some are fast.
+
+- Different methods mix differently.
+
+- Mixing is how well they move around the distribution.
+
+Alternating dimensions and blocking dimensions
+=====
+
+We need a posterior sample for (intercept, slope).
+
+Two options:
+
+1. Alternate:
+
+    - Sample slope while holding intercept fixed (conditioning).
+    - Sample intercept while holding slope fixed.
+    
+This is valid.
+    
+2. Sample slope and intercept at the same time.  This is *blocking*.
+
+Gibbs (conjugate) samplers
+=====
+
+- Possible when we can write [intercept | slope, data] analytically.
+- This only works for particular prior-posterior combinations.
+- Despite sounding simple, there is some computational cost.
+- Both JAGS and nimble use conjugate samplers by default when available.
+
+Random-walk Metropolis-Hastings samplers
+=====
+
+- Current value of a parameter is $\theta$.
+- Propose a new value $\theta' \sim N(\theta, \nu)$.  This is centered on the current value, so we call it a "random walk".
+- How to accept or reject $\theta'$?
+
+     - Calculate ratio of $[\mbox{data, parameters}]$ with $\theta'$ to $[\mbox{data, parameters}]$ with $\theta$.
+     - Only the parts of $[\mbox{data, parameters}]$ involving $\theta$ are needed, because other parts cancel.
+     - If the ratio is $\gt 1$, accept $\theta'$.
+     - Otherwise that ratio is the "acceptance probability".
+     - Draw a uniform random variate to decide whether to accept or reject.
+
+- We have skipped some generality here.
+- Computational cost is either 
+
+     - two evaluations of $[\mbox{data, parameters}]$ or
+     - one evaluation of $[\mbox{data, parameters}]$ and some copying to save previous values.
+     
+- How to choose $\nu$? 
+
+     - By "adaptation".  The algorithm increases or decreases $\nu$ to achieve theoretically derived optimal accpetance rate.  
+     
+- Generalizes to multivariate (block) sampling.
+
+- This method is computationally cheap but may or may not mix well.
+
+Slice samplers
+=====
+
+- We will draw pictures.
+- Based on $\theta$, pick an auxiliary height, then step out to determine a range of valid values of $\theta$.
+- Computational cost can be *many* evaluations of $[\mbox{data, parameters}]$.
+- Again only the parts of $[\mbox{data, parameters}]$ involving $\theta$ are required.
+- Hard to generalize to multivariate (block) sampling, but the automated factor slice sampler (AFSS) sort-of does this.
+
+Multivariate random-walk Metropolis-Hastings samplers
+=====
+
+- Make proposals in multiple dimensions using multivariate normal proposals.
+
+- Works ok in a moderate number of dimensions.
+
+- Does not work well in many dimensions.
+
+- In more dimensions, it is harder to make large proposal steps.
+
+- Adaptation must determine good scale and correlations for proposals.  Finding these can be slow.
+
+- May work well for a small number of correlated dimensions.
+
+- If posterior dimensions are only weakly correlated, it is usually better to alternate dimensions.
+
+- Computational cost depends on which parts of $[\mbox{data, parameters}]$ are needed.
+
+    - Some parameters might share the same calculations.
+    - Some parameters might require different calculations.
+
+- May not work well when the scale of interest for different dimensions is very different.
+
+    - nimble generates a message about this.
+
+
+Multivariate slice samplers
+=====
+
+* Choose new parameter axes (still orthogonal).
+
+    - This of principal components analysis (PCA) for an analogy.
+    - You can think of these as rotated parameter coordinates.
+    - You can think of these as linear combinations of parameters.
+    
+* Use a slice sampler in the new parameter axes.
+
+* Adaptation needs to discover good axes.
+
+* Computational cost is at least as large as slice samplers in each original parameter.  
+
+* Computational cost is higher if different parameters require different model calculations (different parts of $[\mbox{data, parameters}]$).
+
+* Mixing is generally improved if posterior is correlated.
+
+Other samplers in nimble
+=====
+- binary (for Bernoulli variables)
+- categorical (these are *costly*).
+- posterior predictive sampler (for no dependencies)
+- elliptical slice sampler (for certain MVN cases).
+- CAR (conditional autoregression model) normal sampler
+- CAR proper sampler
+- random-walk multinomial sampler
+- random-walk Dirichlet sampler
+- cross-level sampler
+- `RW_llFunction` A random-walk Metropolis-Hastings that calls any log-likelihood function you provide.
+- Particle MCMC samplers.
+
+Other samplers (not currently in nimble)
+=====
+
+Samplers that use derivatives of $[\mbox{data, parameters}]$:
+
+- Hamiltonian Monte Carlo
+
+    - Good mixing but at very high computational cost.
+    
+- Langevin samplers
+
+    - Use one gradient evaluation to make a good MH proposal density.
+    
+These samplers will be supported in `nimble` in the coming year.  They work now in development versions.

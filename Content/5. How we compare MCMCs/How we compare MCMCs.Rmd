@@ -304,7 +304,8 @@ result_vec <- renameMCMC(result_vec, "nimble_vec", "nimble")
 Occupancy MCMC comparison results
 =====
 ```{r eval=recalculate}
-make_MCMC_comparison_pages(c(result_orig, result_dOcc, result_vec), modelName = "Occupancy")
+make_MCMC_comparison_pages(c(result_orig, result_dOcc, result_vec),
+                           modelName = "Occupancy")
 ```
 
 Results are [here](Occupancy.html)

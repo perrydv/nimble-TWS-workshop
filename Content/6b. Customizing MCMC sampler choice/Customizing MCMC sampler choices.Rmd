@@ -187,7 +187,7 @@ samples_default <- nimbleMCMC(Section6p4_code,
                               nburnin = 2000)
 ```
 
-We are interested in the actual parametres (alphas, betas), not derived values (N's).
+We are interested in the actual parameters (alphas, betas), not derived values (N's).
 
 Thinking about sampler configuration
 =====
@@ -218,7 +218,7 @@ inds <- seq(1, nrow(samples_default), by = 10)
 plot(samples_default[inds, 'beta0[1]'], samples_default[inds, 'beta1[1]'], pch = '.')
 ```
 
-Let's set up block samplers are slope-intercept pairs.
+Let's set up block samplers on slope-intercept pairs.
 
 Customizing sampler configuration
 =====
