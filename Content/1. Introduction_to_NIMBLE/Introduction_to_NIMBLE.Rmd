@@ -42,7 +42,7 @@ knitr::opts_chunk$set(echo = TRUE,
     - Explanatory variables:
 
         - `vegHt` = Vegetation height: logistic effect on occupancy probability
-        - `wind` = Wind speed: logistic effect on occupancy probability
+        - `wind` = Wind speed: logistic effect on detection probability
 
 # Occupancy example: Load the package
 ```{r}

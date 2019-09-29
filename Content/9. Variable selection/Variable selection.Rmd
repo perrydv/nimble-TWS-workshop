@@ -93,6 +93,7 @@ Look at JAGS
 lmCodeJAGS <- nimbleCode({
   psi ~ dunif(0,1)   # prior on inclusion probability
   sigma ~ dunif(0, 20)
+  tau <- 1/(sigma*sigma)
   for(i in 1:numVars) {
     z[i] ~ dbern(psi) # indicator variable
     beta[i] ~ dnorm(0, 1e-4)
@@ -100,7 +101,7 @@ lmCodeJAGS <- nimbleCode({
   }
   for(i in 1:n) {
     pred.y[i] <- inprod(X[i, 1:numVars], zbeta[1:numVars])
-    y[i] ~ dnorm(pred.y[i], 1e-4)
+    y[i] ~ dnorm(pred.y[i], tau)
   }
 })
 ```
