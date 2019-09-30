@@ -162,11 +162,11 @@ plot(density(samples_jags[,'psi']))
 Summary of JAGS results
 =====
 
-- There is essentially no posterior probability of including any covariates.
-- `beta[i]`s follow their priors, except for rare moments of inclusion in the model.
+- Marginal posterior inclusion probabilities look reasonable.
+- Mixing over `z[i]`s is slow.  For shorter runs, we would not be happy with mixing.
+- When `z[i]` is 0, `beta[i]`s follow their priors, until they hit values that allow `z[i]` of 1 to be accepted.
 - JAGS uses slice samplers.
-- Once a `z[i]` is 0, the corresponding `beta[i]` will follow its prior with quite good mixing and only rarely take a value that allows `z[i]` to go to 1.
-- A common work-around is to use informative priors.  That means changing your model to help the MCMC implementation.
+- I think a common work-around is to use informative priors.  That means changing your model to help the MCMC implementation.
 
 Look at nimble results with default samplers.
 =====
@@ -218,10 +218,9 @@ plot(density(samples_nimble[,'psi']))
 Summary of results from default nimble
 =====
 
-- Very different from JAGS.
+- Different from (probably worse that) JAGS.
 - `beta[3]`, `beta[4]` and `beta[5]` are included almost always (posterior probability near 1).
 - When `z[i] = 0`, the corresponding `beta[i]` will start following its **prior**.  It may wander far away from reasonable values, with either fast or slow mixing (depending on the situation).
-- The mixing is poor, but it seems to give a more reasonable result than JAGS.
 
 
 Summary of JAGS and default nimble
@@ -234,11 +233,13 @@ Summary of JAGS and default nimble
 - This creates poor mixing over `z[i]`s.
 
      - With a slice sampler (JAGS) `beta[i]` mixes well over its prior, and `z[i]` doesn't get set to 0 unless `beta[i]` happens to hit a small range of values to be included in the model.
-     - With a random-walk MH sampler (default nimble), adaptation depends on `z[i]` (is it adapting to prior or posterior?), and this affects mixing when `z[i]` is 0.  Behavior may be variable, but it gives more inclusions (`z[i]` = 1).
+     - With a random-walk MH sampler (default nimble), adaptation depends on `z[i]` (is it adapting to prior or posterior?), and this affects mixing when `z[i]` is 0.  Behavior seems to be problematic in this example.
      
-- JAGS use of slice samplers seems to lead to bad results in this example.
+- JAGS use of slice samplers seems to lead to reasonable but slow-mixing results in this example.
 
-- `nimble` use of RW MH samplers seems to give more sensible results but still has issues.
+- `nimble` use of RW MH samplers seems to give problematic results.
+     
+- Presumably `nimble` with slice samplers on `beta[i]`s would perform similarly to JAGS.     
      
 - Conventional solution in BUGS/JAGS language: Use informative prior for `beta[i]` to avoid these problems.  This is changing the model because the MCMC implementation has a problem.
 
@@ -321,4 +322,3 @@ Summary of RJMCMC
 - Adaptation for coefficient samplers only occurs when the coefficient is "in the model".
 - Run time was much faster than default nimble, which was faster than JAGS.  Magnitudes will depend on specific problems (how often `z[i]` are 0.)
 - Tuning parameter of RJ proposal scale (sd) must be chosen.
-- From this one example, JAGS (slice samplers, really) may not have reliable behavior with these problems, and default nimble (RW MH samplers, really) may have more reliable but still problematic behavior.
